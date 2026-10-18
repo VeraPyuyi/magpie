@@ -223,6 +223,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       const trashBtn = view.locator(".sm-trash-btn");
       assert((await trashBtn.textContent()).includes(w.trash));
       assert.equal(await trashBtn.locator("em").textContent(), "2");
+      await reach(trashBtn);
       await trashBtn.click();
       const trashed = view.locator(".sm-trash .row");
       await trashed.first().waitFor();

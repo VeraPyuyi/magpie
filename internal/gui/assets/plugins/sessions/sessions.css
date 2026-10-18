@@ -1,4 +1,14 @@
 /* Sessions: every session of an agent, by folder, to resume or delete (sessions.js) */
+.sm-context-bar { display: flex; flex-wrap: wrap; gap: 8px; padding: 6px 11px; height: auto; }
+.sm-context-limit { flex-basis: 100%; font-size: 11px; }
+.sm-context-count { margin-right: auto; }
+.sm-source { min-width: 0; max-width: 40%; font-size: 10px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sm-context-content { min-width: 0; grid-column: 1 / -1; }
+.sm-context-preview { max-height: 40vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--code-font, var(--code)); font-size: 12px; padding: 10px; background: var(--bg); border: 1px solid var(--line-2); border-radius: 8px; }
+.sm-context-result { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; overflow-wrap: anywhere; }
+.sm-context-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+.sm-context-check { flex: none; margin: 0; width: 14px; height: 14px; accent-color: var(--accent); outline-offset: 3px; }
+.sm-context-dialog .bar { flex-wrap: wrap; }
 .sm-head { gap: 8px; height: auto; min-height: 34px; }
 .sm-switch { min-width: 0; flex: 1; display: flex; align-items: center; }
 .sm-agents { min-width: 0; max-width: 100%; }
