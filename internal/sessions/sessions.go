@@ -120,6 +120,7 @@ type Session struct {
 	Gateway       bool          `json:"gateway,omitempty"`
 	Agent         string        `json:"agent"` // magpie agent id: claude, codex, opencode, pi, omp, zcode, dsh, cline, qoder, qoder-cn, grok, workbuddy, codebuddy, droid, cursor, hermes, alma, kimi
 	ID            string        `json:"id"`
+	Source        string        `json:"source,omitempty"` // origin of the session, localhost for native sessions
 	Cwd           string        `json:"cwd"`
 	Title         string        `json:"title"` // the name it was given, else the agent's own title, else the first prompt
 	Nickname      string        `json:"nickname,omitempty"`
@@ -1049,7 +1050,7 @@ func assemble(fs []file, price func(string) *catalog.Price) (Session, bool) {
 		}
 		return filepath.Base(fs[i].path) < filepath.Base(fs[j].path)
 	})
-	s := Session{Agent: fs[0].agent, Path: fs[0].path, Models: []Model{}, WSL: fs[0].wsl}
+	s := Session{Agent: fs[0].agent, Source: "localhost", Path: fs[0].path, Models: []Model{}, WSL: fs[0].wsl}
 	for _, f := range fs {
 		s.ReadOnly = s.ReadOnly || f.readOnly
 	}
