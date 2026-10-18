@@ -251,6 +251,36 @@ This is a local export for handoff; it does not write files,
 summarize with a model, or share sessions across devices. Verification:
 `TestSessionsContext*` in [`internal/gui/sessions_context_test.go`](../../internal/gui/sessions_context_test.go).
 
+The Sessions page keeps an ordered context selection in module memory,
+independently from delete selection. Transcript-capable rows, including
+read-only and gateway rows, can be selected, up to 20. Filtering and paging
+preserve selection; agent changes and opening Trash clear it; a successful
+list reload removes references no longer present or readable. Selection
+changes, reloads, agent changes and modal closure invalidate pending and
+prepared previews, so a late response cannot enable Copy for an old selection.
+
+Prepare posts the ordered `agent:id` array to `context_export` and renders
+`text` literally in the app modal, beside the session statuses and omission
+notices. Explicit Copy uses the existing clipboard helper. It requires
+nonempty text and at least one session without an error; partial failures
+remain visible and an all-error result cannot be copied as eligible context.
+Failed requests preserve selection and offer retry. The reader pastes the
+result into their official Dot conversation and adds a task; the page does
+not dispatch tasks or synchronize conversations across devices.
+
+Folder keys are structured `[provenance category, cwd]` tuples: gateway,
+then WSL distro, then the supplied source or localhost fallback. Labels
+identify how magpie obtained the record, not its creating device or a cloud
+task. Parent/child nesting does not cross categories, and a folder's deletion
+selection covers only that category and folder. Relocation still requires
+the whole project's original eligibility; a source subgroup alone does not
+authorize relocating part of a project. Implementation:
+[`plugins/sessions/client.js`](../../internal/gui/assets/plugins/sessions/client.js).
+Verification: `sessions-context.test.cjs`, `sessions-manage.test.cjs`,
+`sessions-folder-paging.test.cjs`, `sessions-usage-open.test.cjs`,
+`sessions-subagents.test.cjs` and `sessions-relocate.test.cjs` under
+[`internal/gui/tests`](../../internal/gui/tests).
+
 A gateway session without a saved Desktop name is titled by what it was
 first asked (YOU on Discord), not its `ses_…` id: `sessions.GatewayTitle` reads the first 8 complete turns of
 the oldest recorded file of it in the 7 days kept, takes the first user text
