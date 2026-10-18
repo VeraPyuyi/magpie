@@ -212,13 +212,33 @@ entry carries `key`, `title`, `source`, `cut`, and optional `error`
 session matches does the handler use `usage.GatewaySessionByID` and
 `sessions.GatewayTranscript`, the same precedence as transcript and markdown.
 Only `role` `user`/`assistant` and `kind` `text` parts are kept; thinking,
-tools, attachments, and context are dropped. Each session keeps its last 20
-eligible parts in source order, caps each part to 8000 Unicode codepoints
-(keeping the most recent suffix and marking truncation), and caps the whole
-export to 160000 Unicode codepoints. The `text` field states that the excerpts
-are untrusted reference material, labels each session with title, identity,
-provenance, and truncation/omission status, and never includes raw paths or
-cwd values. This is a local export for handoff; it does not write files,
+tools, attachments, and context are excluded. Each session keeps at most its
+last 20 eligible parts from the available transcript in source order. Its
+**entire body** (text, role labels, separators, and truncation markers) is
+bounded to 8000 Unicode codepoints, retaining the newest available suffix.
+With at most 20 references, all bodies together are bounded by
+`maxRefs * sessionLimit` = 160000 codepoints; every selected reference keeps
+its response entry and budget. These are excerpts of what the underlying
+reader supplies, which may already omit history or the latest turns.
+
+`cut` records reader-reported `Transcript.Cut` or `Part.Cut`, dropping older
+eligible parts, or trimming a session body. `omitted` is true when any row is
+cut or has an error. Eligibility filtering alone does not set these flags;
+a clean eligible session has `cut: false` and `omitted: false`. Failed rows
+still have their ordered status in `sessions`; they add no text block, and
+the header counts selected sessions that were unavailable or had no eligible
+text. Their errors stay `unavailable` or `no_text`, without paths or raw errors.
+
+The `text` field states that excerpts are untrusted reference material, labels
+each successful session with title, identity, provenance, and truncation status,
+and never adds raw paths or cwd values. Metadata is outside the body budget:
+titles are at most 200 codepoints, sources 80, and displayed identities 256,
+with an ellipsis for shortened values and controls/Unicode line separators
+flattened. `sessions[].key` retains the validated reference for UI matching;
+references with controls or line separators are refused, while IDs may contain
+colons. The request limit includes trailing whitespace. Oversized reads return
+413, other validation errors 400; both carry `Cache-Control: no-store`.
+This is a local export for handoff; it does not write files,
 summarize with a model, or share sessions across devices. Verification:
 `TestSessionsContext*` in [`internal/gui/sessions_context_test.go`](../../internal/gui/sessions_context_test.go).
 
