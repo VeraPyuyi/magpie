@@ -191,6 +191,28 @@ when turns or a part's end weren't kept). A magpie that others reach as a
 remote magpie has no file of their agents' sessions, so this is the only way
 it can export them. Verification: `TestGatewaySessionExportsMarkdown`.
 
+`POST /api/sessions/context_export` prepares bounded excerpts for explicit
+human handoff. The body is a JSON array of `agent:id` references (at most
+20 unique non-empty entries, 16 KiB at most). The request is validated before
+any session is read; malformed JSON, trailing JSON, unknown agents, empty
+ids, duplicate refs, or filesystem-like refs are refused. The response is
+`{text, sessions, omitted}` with `Cache-Control: no-store`. Each session
+entry carries `key`, `title`, `source`, `cut`, and optional `error`
+(`unavailable` or `no_text`). Native sessions are resolved with
+`sessions.Find` and read with `sessions.TranscriptOf`; only when no native
+session matches does the handler use `usage.GatewaySessionByID` and
+`sessions.GatewayTranscript`, the same precedence as transcript and markdown.
+Only `role` `user`/`assistant` and `kind` `text` parts are kept; thinking,
+tools, attachments, and context are dropped. Each session keeps its last 20
+eligible parts in source order, caps each part to 8000 Unicode codepoints
+(keeping the most recent suffix and marking truncation), and caps the whole
+export to 160000 Unicode codepoints. The `text` field states that the excerpts
+are untrusted reference material, labels each session with title, identity,
+provenance, and truncation/omission status, and never includes raw paths or
+cwd values. This is a local export for handoff; it does not write files,
+summarize with a model, or share sessions across devices. Verification:
+`TestSessionsContext*` in [`internal/gui/sessions_context_test.go`](../../internal/gui/sessions_context_test.go).
+
 A gateway session without a saved Desktop name is titled by what it was
 first asked (YOU on Discord), not its `ses_…` id: `sessions.GatewayTitle` reads the first 8 complete turns of
 the oldest recorded file of it in the 7 days kept, takes the first user text
