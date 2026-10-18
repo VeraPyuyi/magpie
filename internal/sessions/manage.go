@@ -158,9 +158,6 @@ func ListAgent(agent string) []Managed {
 // in, as ListAgent lists it and Find finds it: how to resume it, and
 // whether its conversation can be read.
 func listed(s *Session) {
-	if s.Source == "" {
-		s.Source = "localhost"
-	}
 	if s.Resume == "" && !s.ReadOnly {
 		s.Resume = resumeCommand(s.WSL, s.Agent, s.ID, s.Cwd, s.Path)
 	}

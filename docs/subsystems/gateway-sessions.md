@@ -40,13 +40,22 @@ by its prompt. `passOnCaller` sends the mark on to a remote magpie beside
 the session, and no vendor is sent either (`TestDshMarksSessionAndCompaction`).
 
 Native sessions assembled from the agents' files carry `source: "localhost"`
-through the existing session APIs, including `/api/sessions/manage`. This is
-an origin label, independent of `agent`, `id`, `gateway` and `wsl`; WSL sessions
-read by this host also use `localhost` and keep their distro in `wsl`.
-The optional `Session.Source` field is omitted when unknown, including gateway
-projections. It does not change session lookup or the agents' storage paths.
-Verification: `TestSessionIncludesSourceIdentity`,
-`TestLocalSessionsIncludeSourceIdentity`, `TestSessionsManageCarriesUsage`.
+through the existing session APIs, including `/api/sessions/manage`. It is a
+category — this computer's own agents, versus no known origin — and not a
+device identity: a gateway name is not sent or recorded, and it is the same
+`Session.Source` field for every native agent. It is independent of `agent`,
+`id`, `gateway` and `wsl`; a WSL distro's sessions are read by this computer,
+so they carry `source: "localhost"` too and keep their distro in `wsl`.
+`MergeExternal` sets no `Source`, so a gateway projection's key is absent from
+its JSON. The field is read-only for grouping; it changes neither session
+lookup nor the agents' storage paths. This is not the transcript's `source`
+(`native` or `gateway`, `Transcript.Source`, which says where the conversation
+text came from) nor an agent row's or usage row's own `source`.
+Verification: `TestLocalSessionsIncludeSourceIdentity` (recent list and
+manage listing), `TestWSLSessionsIncludeSourceIdentity` (the distro fixture),
+`TestGatewaySessionsOmitSource` (a projection's JSON has no `source`, and a
+native row beside it wins the identity with localhost's) and
+`TestSessionsManageCarriesUsage`.
 
 When the same identity is present in a native session, the native session wins
 and the gateway projection is omitted. Gateway projections have no path,

@@ -6,39 +6,10 @@ import (
 	"testing"
 )
 
-func TestSessionIncludesSourceIdentity(t *testing.T) {
-	s := Session{Agent: "codex", ID: "test-id", Source: "localhost"}
-	b, err := json.Marshal(s)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(b), `"source":"localhost"`) {
-		t.Fatal("Source field missing in serialization")
-	}
-	s.Source = ""
-	b, err = json.Marshal(s)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(b), `"source"`) {
-		t.Fatal("unknown source should be omitted")
-	}
-}
-
-func TestListedDefaultsSourceIdentity(t *testing.T) {
-	for _, source := range []string{"", "other-host"} {
-		s := Session{Agent: "codex", ID: "test-id", Source: source, ReadOnly: true}
-		listed(&s)
-		want := source
-		if want == "" {
-			want = "localhost"
-		}
-		if s.Source != want {
-			t.Errorf("listed source = %q, want %q", s.Source, want)
-		}
-	}
-}
-
+// A session read from an agent's own files is localhost's, wherever the
+// page it reaches (the recent list, /api/sessions/manage) reads it; a
+// WSL distro's sessions are read by this computer and keep their distro
+// in WSL. Without the change these fixtures marshal no "source" at all.
 func TestLocalSessionsIncludeSourceIdentity(t *testing.T) {
 	manageSetup(t)
 	recent := List(All)
@@ -68,5 +39,49 @@ func TestLocalSessionsIncludeSourceIdentity(t *testing.T) {
 				t.Errorf("%s session %s source = %v, want localhost", agent, s.ID, out["source"])
 			}
 		}
+	}
+}
+
+// A session in a WSL distro is read by this computer through the distro,
+// so it is localhost's session too; the distro stays in WSL.
+func TestWSLSessionsIncludeSourceIdentity(t *testing.T) {
+	home, _ := wslDistro(t)
+	wslSettle()
+	var n int
+	for _, s := range List(All) {
+		if s.WSL != "Ubuntu" || !strings.HasPrefix(s.Path, home) {
+			continue
+		}
+		n++
+		if s.Source != "localhost" {
+			t.Errorf("%s session %s source = %q, want localhost", s.Agent, s.ID, s.Source)
+		}
+	}
+	if n == 0 {
+		t.Fatal("no WSL session from the distro")
+	}
+}
+
+// A gateway projection is not read from an agent's file here, so nothing
+// knows where it came from and the key stays out of its JSON.
+func TestGatewaySessionsOmitSource(t *testing.T) {
+	out := MergeExternal(nil, []ExternalSession{{Agent: "claude", ID: "ses-gw", Title: "asked", Models: []ExternalModel{{Model: "opus-x", Priced: true}}}})
+	if len(out) != 1 {
+		t.Fatalf("gateway sessions %+v, want one", out)
+	}
+	if out[0].Source != "" {
+		t.Errorf("source = %q, want none", out[0].Source)
+	}
+	b, err := json.Marshal(out[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), `"source"`) {
+		t.Errorf("a gateway row carries a source: %s", b)
+	}
+	// a native row beside it keeps localhost's, and wins the identity
+	merged := MergeExternal([]Session{{Agent: "claude", ID: "ses-gw", Source: "localhost"}}, []ExternalSession{{Agent: "claude", ID: "ses-gw"}})
+	if len(merged) != 1 || merged[0].Source != "localhost" || merged[0].Gateway {
+		t.Errorf("merged %+v", merged)
 	}
 }
