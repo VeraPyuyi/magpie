@@ -2,6 +2,7 @@
 // kernel adds them to i18n.js's (magpie.strings).
 magpie.strings({
   zh: {
+    "Retry context preparation": "重试",
     "Local files": "本地文件",
     "WSL on this computer: {name}": "本机 WSL：{name}",
     "Source: {source}": "来源：{source}",
@@ -88,6 +89,7 @@ magpie.strings({
     "Searched what was said in the latest {n} of {total} sessions.": "已搜索最近 {n} 个会话的对话内容（共 {total} 个）。",
   },
   "zh-TW": {
+    "Retry context preparation": "重試",
     "Local files": "本機檔案",
     "WSL on this computer: {name}": "本機 WSL：{name}",
     "Source: {source}": "來源：{source}",
@@ -174,6 +176,7 @@ magpie.strings({
     "Searched what was said in the latest {n} of {total} sessions.": "已搜尋最近 {n} 個會話的對話內容（共 {total} 個）。",
   },
   ja: {
+    "Retry context preparation": "再試行",
     "Local files": "ローカルファイル",
     "WSL on this computer: {name}": "このコンピューターの WSL：{name}",
     "Source: {source}": "取得元：{source}",
@@ -260,6 +263,7 @@ magpie.strings({
     "Searched what was said in the latest {n} of {total} sessions.": "最新 {n} 件の会話の内容を検索しました（全 {total} 件）。",
   },
   de: {
+    "Retry context preparation": "Wiederholen",
     "Local files": "Lokale Dateien",
     "WSL on this computer: {name}": "WSL auf diesem Computer: {name}",
     "Source: {source}": "Quelle: {source}",

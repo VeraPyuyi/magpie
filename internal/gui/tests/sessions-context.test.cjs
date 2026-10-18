@@ -10,7 +10,7 @@ const excerpt = '<img src=x onerror=alert(1)> literal excerpt';
 const at = new Date(Date.now() - 3600000).toISOString();
 const sess = (id, extra = {}) => ({ agent: 'claude', id, title: 'Chat ' + id, cwd: '/work/app', source: 'localhost', last: at, start: at, models: [], transcript: true, deletable: true, size: 123, ...extra });
 function serve(lang, calls, control) {
-  const sessions = [sess('local'), sess('gateway', { gateway: true, source: '', parent_session: 'local' }), sess('readonly', { read_only: true, deletable: false }), sess('unreadable', { transcript: false }), sess('wsl', { wsl: 'Ubuntu' }), sess('source', { source: 'fixture-source' }), sess('child', { parent_session: 'local', cwd: '/work/child' }), ...Array.from({ length: 20 }, (_, i) => sess('extra-' + i))];
+  const sessions = [sess('local'), sess('gateway', { gateway: true, source: '', parent_session: 'local' }), sess('readonly', { read_only: true, deletable: false }), sess('unreadable', { transcript: false }), sess('wsl', { wsl: 'Ubuntu' }), sess('source', { source: 'fixture-source' }), sess('child', { parent_session: 'local', cwd: '/work/child' }), sess('gateway-empty', { gateway: true, cwd: '', source: '' }), ...Array.from({ length: 20 }, (_, i) => sess('extra-' + i))];
   return async route => {
     const url = new URL(route.request().url());
     const json = data => route.fulfill({ json: data });
@@ -57,10 +57,12 @@ for (const engine of process.env.BROWSER ? [process.env.BROWSER] : ['chromium', 
     const view = page.locator('#view-sessions');
     const row = id => view.locator(`.sm-sess[data-id="${id}"]`);
     await row('local').waitFor();
+    const missingRetry = await page.evaluate(() => ['zh', 'zh-TW', 'ja', 'de'].filter(l => !I18N[l]['Retry context preparation']));
+    assert.deepEqual(missingRetry, [], 'Retry is translated in every shipped language');
     assert.equal(await row('local').locator('.sm-context-check').count(), 1, 'readable rows offer a separate context checkbox');
     assert.equal(await row('unreadable').locator('.sm-context-check').count(), 0);
     assert.equal(await row('readonly').locator('.sm-context-check').count(), 1);
-    assert.equal(await view.locator('.sm-group').count(), 4, 'equal folders from gateway, WSL, source and localhost remain separate; cross-category children stay on top');
+    assert.equal(await view.locator('.sm-group').count(), 5, 'equal folders from gateway, WSL, source and localhost remain separate; cross-category children stay on top');
     const localFolder = row('local').locator('xpath=ancestor::div[contains(@class,"sm-group")]');
     await localFolder.locator('.sm-folder-check').check();
     await reach(page, row('local').locator('xpath=..').locator('.sm-subs-fold'));
@@ -72,7 +74,12 @@ for (const engine of process.env.BROWSER ? [process.env.BROWSER] : ['chromium', 
     assert((await view.locator('.sm-source').allTextContents()).some(s => s.includes('Ubuntu')));
     assert((await view.locator('.sm-source').allTextContents()).some(s => s.includes('fixture-source')));
     // Gateway starts folded, so find it by its provenance label.
-    const gatewayFolder = page.locator('.sm-group').filter({ has: page.locator('.sm-source-gateway') });
+    const gatewayFolders = page.locator('.sm-group').filter({ has: page.locator('.sm-source-gateway') });
+    const gatewayFolder = gatewayFolders.first();
+    const emptyGateway = gatewayFolders.last();
+    assert.equal(await emptyGateway.locator('.sm-folder .sm-source').count(), 0, 'gateway provenance is not repeated when it already names the folder');
+    const relocateLabel = await page.evaluate(() => t('Relocate project'));
+    assert.equal(await localFolder.getByRole('button', { name: relocateLabel, exact: true }).count(), 0, 'mixed WSL/native paths keep the existing relocation restriction');
     await reach(page, gatewayFolder.locator('.fold').first());
     await gatewayFolder.locator('.fold').first().click();
     await reach(page, row('gateway').locator('.sm-context-check'));
@@ -176,12 +183,16 @@ for (const engine of process.env.BROWSER ? [process.env.BROWSER] : ['chromium', 
     }
     const beyond = row('extra-18').locator('.sm-context-check'); await reach(page, beyond); await beyond.click();
     assert.equal(await beyond.isChecked(), false);
+    const limitText = await page.evaluate(() => t('Select at most 20 sessions for context.'));
+    assert.equal(await page.locator('#status').textContent(), limitText, 'refusing the 21st selection announces the localized limit');
+    assert.equal(await page.locator('#status').getAttribute('role'), 'alert', 'the shared status helper announces refusal as an accessible error');
     assert.equal(await view.locator('.sm-context-check:checked').count(), 20);
     assert((await view.locator('.sm-context-count').textContent()).includes('20'));
     assert.equal(await view.locator('.sm-context-bar').evaluate(e => e.getBoundingClientRect().right <= innerWidth), true);
     assert.equal(await row('local').locator('.sm-context-check').getAttribute('aria-describedby'), 'sm-context-limit');
     assert.equal(await page.evaluate(() => document.querySelectorAll('#sm-context-limit').length), 1, 'the limit note each checkbox describes is in the page once');
     await row('local').locator('.sm-context-check').evaluate(c => { c.checked = false; c.dispatchEvent(new Event('change')); });
+    assert((await view.locator('.sm-context-count').textContent()).includes('19/20'), 'explicit deselection leaves 19 before the reload');
     // Reload retires a pending preview and drops only entries no longer listed.
     await reach(page, prepare);
     control.hold = new Promise(r => { release = r; });
@@ -191,11 +202,13 @@ for (const engine of process.env.BROWSER ? [process.env.BROWSER] : ['chromium', 
     await page.evaluate(() => show('sessions'));
     release(); control.hold = null;
     await modal.waitFor({ state: 'hidden' });
-    await page.waitForFunction(() => document.querySelector('.sm-context-count')?.textContent.includes('19/20'));
+    await row('readonly').waitFor({ state: 'detached' });
+    assert((await view.locator('.sm-context-count').textContent()).includes('18/20'), 'the completed reload prunes the removed selection (19 before, 18 after)');
+    assert.equal(await view.locator('.sm-context-check:checked').count(), 18);
     // Filtering preserves hidden picks; an agent change clears them.
     await reach(page, view.locator('.sm-filter'));
     await view.locator('.sm-filter').fill('Chat local');
-    assert((await view.locator('.sm-context-count').textContent()).includes('19/20'));
+    assert((await view.locator('.sm-context-count').textContent()).includes('18/20'));
     await view.locator('.sm-filter').fill('');
     // Agent changes also invalidate a response that is still in flight.
     await view.locator('.sm-context-prepare').click();
@@ -223,7 +236,7 @@ for (const engine of process.env.BROWSER ? [process.env.BROWSER] : ['chromium', 
     await row('source').waitFor();
     assert.equal(await row('source').locator('xpath=..').evaluate(e => e.classList.contains('open')), true);
     // Plugin-local keys are available in every shipped translation.
-    const missing = await page.evaluate(() => ['Prepare context', 'Copy context', 'Select context: {title}', '{n}/20 context sessions', 'No eligible text', 'Local files', 'WSL on this computer: {name}']
+    const missing = await page.evaluate(() => ['Retry context preparation', 'Prepare context', 'Copy context', 'Select context: {title}', '{n}/20 context sessions', 'No eligible text', 'Local files', 'WSL on this computer: {name}']
       .filter(k => ['zh', 'zh-TW', 'ja', 'de'].some(l => !I18N[l][k])));
     assert.deepEqual(missing, []);
     assert.deepEqual(errors, []);

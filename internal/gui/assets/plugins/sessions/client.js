@@ -577,7 +577,7 @@ magpie.plugin("sessions", (ctx) => {
     const content = el("div", "sm-context-content");
     const bar = el("div", "bar");
     const close = el("button", "text sm-context-close", t("Close"));
-    const retry = el("button", "text sm-context-retry", t("Retry"));
+    const retry = el("button", "text sm-context-retry", t("Retry context preparation"));
     const cp = el("button", "text primary sm-context-copy", t("Copy context"));
     for (const b of [close, retry, cp]) b.type = "button";
     cp.disabled = true;
@@ -809,9 +809,13 @@ magpie.plugin("sessions", (ctx) => {
       redrawList();
     };
     const [category, path] = JSON.parse(cwd);
-    r.append(fold, el("span", "sm-source" + (category === "gateway" ? " sm-source-gateway" : ""), categoryName(category)), el("span", "sub sm-path", path), el("span", "grow"), el("span", "note", t(inFolder.length === 1 ? "{n} session" : "{n} sessions", { n: inFolder.length })));
+    r.append(fold);
+    if (category === "gateway") r.classList.add("sm-source-gateway");
+    const provenance = categoryName(category);
+    if (provenance !== groupName(cwd)) r.append(el("span", "sm-source", provenance));
+    r.append(el("span", "sub sm-path", path), el("span", "grow"), el("span", "note", t(inFolder.length === 1 ? "{n} session" : "{n} sessions", { n: inFolder.length })));
     const allInFolder = (data.sessions || []).filter((s) => s.cwd === path);
-    if (data.agent === "claude" && path && allInFolder.every((s) => groupOf(s) === cwd && !s.read_only && !s.gateway)
+    if (data.agent === "claude" && path && allInFolder.every((s) => !s.read_only && !s.gateway)
       && new Set(allInFolder.map((s) => s.wsl || "")).size === 1) {
       const move = el("button", "text", t("Relocate project"));
       move.type = "button";
@@ -1244,7 +1248,7 @@ magpie.plugin("sessions", (ctx) => {
           input.disabled = true;
           cancel.textContent = t("Close");
           picked.clear();
-          opened.add(out.to);
+          opened.add(groupOf({ cwd: out.to, wsl }));
           await load();
         } else {
           preview = out;
