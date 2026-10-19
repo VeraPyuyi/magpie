@@ -85,6 +85,7 @@ func TestDotCLITaskGateAndRecovery(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "task.json")
 	b, _ := json.Marshal(sub)
 	os.WriteFile(path, b, 0600)
+	dotTestPrivate(t, path)
 	var out bytes.Buffer
 	err := dotTo(context.Background(), &out, []string{"submit", "--file", path})
 	if err == nil || !strings.Contains(err.Error(), "probe_required") || posts.Load() != 0 {

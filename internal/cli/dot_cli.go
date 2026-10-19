@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
+
+	"reflect"
 	"regexp"
 	"strings"
 	"time"
@@ -46,6 +46,9 @@ type dotPairingFile struct {
 }
 
 func dotDecode(b []byte, dst any) error {
+	if err := dotCanonicalJSON(b, reflect.TypeOf(dst).Elem()); err != nil {
+		return fmt.Errorf("dot: invalid or ambiguous JSON file")
+	}
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.DisallowUnknownFields()
 	if err := d.Decode(dst); err != nil {
@@ -58,32 +61,14 @@ func dotDecode(b []byte, dst any) error {
 }
 
 func dotRead(path string, private bool, max int64) ([]byte, error) {
-	abs, err := filepath.Abs(path)
+	f, closeInput, err := dotOpenInput(path)
 	if err != nil {
-		return nil, fmt.Errorf("dot: invalid input path")
+		return nil, fmt.Errorf("dot: cannot securely open input file")
 	}
-	// Reject links in every path component, including Windows junctions.
-	for p := abs; ; p = filepath.Dir(p) {
-		st, e := os.Lstat(p)
-		if e != nil || st.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
-			return nil, fmt.Errorf("dot: input must not traverse links or reparse points")
-		}
-		if p == filepath.Dir(p) {
-			break
-		}
-	}
-	f, err := os.Open(abs)
-	if err != nil {
-		return nil, fmt.Errorf("dot: cannot open input file")
-	}
-	defer f.Close()
+	defer closeInput()
 	st, err := f.Stat()
 	if err != nil || !st.Mode().IsRegular() {
 		return nil, fmt.Errorf("dot: input must be a regular file")
-	}
-	original, err := os.Lstat(abs)
-	if err != nil || !os.SameFile(original, st) {
-		return nil, fmt.Errorf("dot: input changed")
 	}
 	if err := dotCheckFile(f, st, private); err != nil {
 		return nil, err
@@ -92,9 +77,11 @@ func dotRead(path string, private bool, max int64) ([]byte, error) {
 	if err != nil || int64(len(b)) > max {
 		return nil, fmt.Errorf("dot: input exceeds %d bytes or cannot be read", max)
 	}
+	if err := dotCheckFile(f, st, private); err != nil {
+		return nil, err
+	}
 	return b, nil
 }
-
 func dotScope(cfg dotbridge.Config) string { return "cli:" + cfg.Address + ":" + cfg.Credential }
 
 func dotTo(ctx context.Context, out io.Writer, args []string) error {
@@ -191,14 +178,18 @@ func dotTo(ctx context.Context, out io.Writer, args []string) error {
 		}
 		return json.NewEncoder(out).Encode(job)
 	case "job":
-		job, err := c.Get(ctx, args[1])
+		job, err := dotKnownJob(ctx, c, scope, args[1])
 		if err != nil {
 			return fmt.Errorf("dot: job lookup failed")
 		}
 		return json.NewEncoder(out).Encode(job)
 	case "cancel":
-		job, err := c.Cancel(ctx, args[1])
+		before, err := dotKnownJob(ctx, c, scope, args[1])
 		if err != nil {
+			return fmt.Errorf("dot: cannot validate job before cancellation; inspect with: magpie dot job %s", args[1])
+		}
+		job, err := c.Cancel(ctx, args[1])
+		if err != nil || dotValidateJob(job, args[1]) != nil || !dotSameJob(before, job) || !job.CancelRequested {
 			return fmt.Errorf("dot: cancellation outcome unknown; inspect with: magpie dot job %s", args[1])
 		}
 		return json.NewEncoder(out).Encode(struct {

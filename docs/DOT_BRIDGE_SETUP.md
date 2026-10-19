@@ -19,8 +19,9 @@ magpie dot pair /path/to/pairing.json
 Magpie validates the file before writing anything:
 
 - regular file only
-- no symlinks, junctions, reparse points, or hard links in the path
-- strict JSON with a single object
+- directory-relative handle traversal forbids symlinks, junctions and reparse points; the opened file must have exactly one hard link
+- current-user ownership and private access: Windows requires a protected DACL with only explicit current-user allow ACEs; Unix requires owner-only permissions
+- strict JSON with a single object, canonical field spelling, no duplicate keys (including nested messages), no unknown fields or trailing values
 - version `1` only
 - pairing files capped at 16 KiB; task files capped at 256 KiB
 - loopback `listen` and authenticated `/dot-bridge/v1/status`
@@ -100,5 +101,23 @@ pending jobs.
 - Loopback client only: no proxy, no redirects.
 - Never pass tokens on the command line or through shell history.
 - Pairing and task files must be private to the current user.
-- Foreign hosts, origins, and forwarded headers are rejected by the bridge
-  server; the CLI uses the existing loopback client in `internal/dotbridge`.
+- The CLI uses the existing loopback client in `internal/dotbridge`.
+- Windows inputs must be on a local drive. Create private files with a protected
+  DACL granting only the current user's SID; inherited ACLs are rejected even
+  if the inherited entries currently appear harmless. This policy also applies
+  to task files. The CLI queries owner, DACL and link count on the read handle,
+  and fails closed when any query fails.
+- Traversal is relative to held directory handles, so ancestor renames cannot
+  redirect later opens. Windows leaf handles deny write/delete sharing. This
+  protects against ordinary path substitution and access by other users; it
+  does not prove isolation from malicious code running as the current user,
+  administrators, pre-existing writable mappings or kernel access. Unix
+  directory-relative no-follow opens similarly bind traversal, but do not
+  prevent the owner from concurrently modifying an already-open file.
+- `job` and `cancel` validate version, exact job ID, request/digest/mode/session,
+  legal states and result consistency. Known requests use journal identity and
+  `Resume` validation. For unknown jobs, identity has only the authenticated
+  bridge as its source. Cancellation first validates the current job, then
+  requires a matching receipt with cancellation intent set; malformed or
+  unrelated responses produce an error with GET recovery guidance. A valid
+  cancellation acknowledgement makes no claim that cloud work has stopped.
