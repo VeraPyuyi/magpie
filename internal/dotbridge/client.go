@@ -15,7 +15,12 @@ import (
 	"time"
 )
 
-const maxResponseBytes = 1<<20 + 1
+// Wire budgets include JSON escaping and metadata; raw content limits remain
+// separate. Read one extra response byte to reject oversize bodies, not truncate.
+const (
+	maxWireRequestBytes  = 2 << 20
+	maxWireResponseBytes = 2 << 20
+)
 
 // Connection talks to the local Dot bridge API.
 type Connection struct {
@@ -113,12 +118,12 @@ func (c *Connection) do(ctx context.Context, method, path string, body []byte) (
 		return nil, nil, err
 	}
 	defer resp.Body.Close()
-	limited := io.LimitReader(resp.Body, maxResponseBytes)
+	limited := io.LimitReader(resp.Body, maxWireResponseBytes+1)
 	b, err := io.ReadAll(limited)
 	if err != nil {
 		return resp, nil, err
 	}
-	if len(b) >= maxResponseBytes {
+	if len(b) > maxWireResponseBytes {
 		return resp, nil, errResponseSize
 	}
 	if _, err := c.authHeader(); err != nil {
@@ -132,12 +137,32 @@ type submitEnvelope struct {
 	Accepted bool `json:"accepted"`
 }
 
+// encodeSubmission checks the full encoded envelope before reserving identity or
+// setting the acceptance barrier. Valid content may expand sixfold in JSON.
+func encodeSubmission(sub Submission) ([]byte, error) {
+	if err := validateSubmission(sub); err != nil {
+		return nil, err
+	}
+	if sub.Messages == nil {
+		sub.Messages = []Message{}
+	}
+	b, err := json.Marshal(sub)
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > maxWireRequestBytes {
+		return nil, errInvalidBody
+	}
+	return b, nil
+}
+
 // Submit performs the single POST for a new job attempt.
 func (c *Connection) Submit(ctx context.Context, sub Submission, attempt *Attempt) (Job, error) {
 	if attempt == nil {
 		return Job{}, errInvalidBody
 	}
-	if err := validateSubmission(sub); err != nil {
+	b, err := encodeSubmission(sub)
+	if err != nil {
 		return Job{}, err
 	}
 	digest, err := Digest(sub)
@@ -146,13 +171,6 @@ func (c *Connection) Submit(ctx context.Context, sub Submission, attempt *Attemp
 	}
 	if snap := attempt.Snapshot(); snap.Digest != digest || snap.RequestID != sub.RequestID {
 		return Job{}, errDigestConflict
-	}
-	if sub.Messages == nil {
-		sub.Messages = []Message{}
-	}
-	b, err := json.Marshal(sub)
-	if err != nil {
-		return Job{}, err
 	}
 	attempt.beginSubmit()
 	resp, body, err := c.do(ctx, http.MethodPost, "/dot-bridge/v1/jobs", b)
@@ -248,7 +266,7 @@ func (c *Connection) Enqueue(ctx context.Context, sub Submission, scope string, 
 	if attempt == nil {
 		return Job{}, errInvalidBody
 	}
-	if err := validateSubmission(sub); err != nil {
+	if _, err := encodeSubmission(sub); err != nil {
 		return Job{}, err
 	}
 	digest, err := Digest(sub)
