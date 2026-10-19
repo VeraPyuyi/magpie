@@ -24,6 +24,8 @@ type dotBridgeHarness struct {
 	text                 string
 	drop                 bool
 	invalidReceipt       bool
+	cancels              atomic.Int32
+	onSubmit             func(*http.Request)
 }
 
 func newDotBridgeHarness() *dotBridgeHarness {
@@ -32,11 +34,17 @@ func newDotBridgeHarness() *dotBridgeHarness {
 func (h *dotBridgeHarness) serve() *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case strings.HasSuffix(r.URL.Path, "/cancel"):
+			h.cancels.Add(1)
+			w.WriteHeader(200)
 		case r.URL.Path == "/dot-bridge/v1/status":
 			now := time.Now().UTC()
 			json.NewEncoder(w).Encode(map[string]any{"version": 1, "enabled": true, "paired": true, "ready": true, "code": "ready", "verified_at": now.Add(-time.Second), "expires_at": now.Add(time.Minute), "subscription": map[string]any{"state": "active", "expires_at": now.Add(time.Minute)}, "capabilities": map[string]bool{"text": true}})
 		case r.Method == "POST" && r.URL.Path == "/dot-bridge/v1/jobs":
 			h.posts.Add(1)
+			if h.onSubmit != nil {
+				h.onSubmit(r)
+			}
 			var sub dotbridge.Submission
 			json.NewDecoder(r.Body).Decode(&sub)
 			digest, _ := dotbridge.Digest(sub)
@@ -209,10 +217,11 @@ func TestDotRoleAndSessionBoundaries(t *testing.T) {
 	if one == dotSessionID(r, a) {
 		t.Fatal("sessions joined")
 	}
+	// Arbitrary loopback auth text is not an authenticated identity.
 	r.Header.Set("Authorization", "Bearer other")
 	c, _ := dotRequestID(r)
-	if c == a {
-		t.Fatal("callers joined")
+	if c != a {
+		t.Fatal("raw auth changed local scope")
 	}
 	r.Header.Del(dotRequestHeader)
 	a, _ = dotRequestID(r)
@@ -271,7 +280,6 @@ func TestDotVendorCannotSetAcceptance(t *testing.T) {
 func TestDotPreSubmitFailureCanFallback(t *testing.T) {
 	h := newDotBridgeHarness()
 	setupDotBarrierGateway(t, h)
-	dotbridge.SetJournalPath(filepath.Join(t.TempDir(), "absent-parent", "requests.json"))
 	// A corrupt journal must fail before POST; the normal provider can answer.
 	journal := filepath.Join(t.TempDir(), "requests.json")
 	if err := os.WriteFile(journal, []byte(`broken`), 0600); err != nil {

@@ -108,3 +108,85 @@ goroutines/timers and still need a `-race` run on a machine with CGO.
   committed with Task 3 as instructed and was not reverted.
 - **No subagents**, no live Dot calls, no credential writes, no `internal/
   dotbridge` production logic change.
+
+## Review fix pass ¡ª 2026-10-19
+
+This append supersedes inaccurate claims in the original report. The original
+Task3 code did not write ledger rows for failed/pending/unknown jobs, and CGO
+was available through C:\msys64\mingw64\bin\gcc.exe. The earlier claim that
+race testing was impossible was incorrect. The controller's sparse race PASS
+(72.52 s) did not exercise completed streams and did not rule out C1.
+
+Addressed C1 and I2¨CI8 from the external Task3 review:
+
+- C1: headers are initialized on the real holdWriter before its watch starts;
+  serveDot writes no raw response headers. Completed streams call WriteHeader
+  under the hold writer lock and emit through wholeAsStream's already-begun
+  SSE writer. Both Chat and Responses completion paths are exercised under
+  concurrent keepQuiet, including the real Handler. Loop detection is disabled
+  for Dot's buffered output so it cannot turn a verified result into a reask.
+- I2: dotScope uses access.Caller(ctx).KeyID, with fixed local scope only when
+  no named key authenticated. Real lanGuard + Handler requests with identical
+  stale Authorization and distinct valid x-api-key values produce two POSTs;
+  repeating the first caller performs lookup only.
+- I3: raw Chat messages, Responses items and text parts reject extra keys,
+  including assistant tool_calls/function_call, name/tool_call_id and unknown
+  nested fields. service_tier is unsupported rather than silently discarded.
+- I4: call.To is set before Enqueue. Actual usage.Load rows for pending,
+  failed and uncertain attempts retain errors and zero unknown token counts.
+- I5: the exact rendered response ID is read once from the native answer and
+  recorded; Chat chatcmpl- and Responses resp_ IDs now match wire and ledger.
+- I6: Try.Status/Call.Status retain HTTP 200 after keepalives; Try.DotError
+  separately carries the semantic code, and Fail is other (canceled for client
+  disconnect). Whole-response errors retain 409. Error text persists in usage
+  even with HTTP 200. Successful results also run rule/sealedBy bookkeeping.
+- I7/I8: tests cover completed native streams and one finish marker, no usage,
+  keepalive-before-error ordering controlled by Flush notification, zero Cancel
+  POSTs on disconnect after submit, 0->120-second configuration default and
+  rejected bounds without sleeping, a prior busy provider plus nested patience
+  group, and an eligible small rescue member that is never dispatched after
+  acceptance. Counting bridge assertions retain exactly one POST.
+
+Related minors: snapshot JSON keys are lower snake case; IsDigestConflict in
+Attempt uses errors.Is (a narrow exported query, no mutation hook); poll receipt
+failures become unknown, unknown states stop waiting, pl.left is included in
+preflight detection, and dead test journal setup was removed. Pre-submit
+configuration/journal availability failures may fall back; invalid IDs and
+reused IDs with conflicting content intentionally stop locally. They do not
+permit another provider to answer under a conflicting durable identity.
+
+RED evidence before production edits:
+
+- TestDotReviewNestedWireFields: assistant history was queued (1 POST, 409)
+  instead of locally rejected; unknown item/part and service_tier admitted.
+- TestDotReviewAuthenticatedScopes: 1 POST/2 GETs instead of 2 POSTs/1 GET.
+- TestDotReviewFailureLedger: no Dot ledger rows for all three failure modes.
+- TestDotReviewCompletedStreams: recorded raw job IDs differed from wire IDs.
+- TestDotReviewKeepaliveErrorAndCancel: Try reported 409 and empty Fail after
+  actual HTTP 200/comments.
+- Forced overlap TestDotReviewConcurrentHeader under MinGW -race reproduced
+  sseWriter.begin header writes racing keepAlive's map iteration, followed by
+  fatal error: concurrent map iteration and map write. Full retained log:
+  C:/Users/13678/AppData/Local/Temp/opencode/magpie-context-verification/magpie-dot-task3-header-red-race.log
+  Earlier attempts did not schedule the overlapping map iteration and did not
+  detect the race; those PASS runs were not treated as proof of safety.
+
+GREEN evidence on the final edits:
+
+- external run_checks.py --race ... go test -race -tags nogui
+  ./internal/gateway ./internal/provider ./internal/dotbridge -run
+  '^TestDot|^TestGroupFirstTokenFailsOver$|^TestNestedGroupFirstToken$|^TestMemberTooSmall|KeepAlive|Keepalive|^TestLANGuard$'
+  -count=1 -timeout 120s: exit 0, 78.26 seconds.
+  Log: C:/Users/13678/AppData/Local/Temp/opencode/magpie-context-verification/magpie-dot-task3-review-final-race.log
+- go test -tags nogui ./internal/gateway ./internal/dotbridge -run '^TestDot'
+  -count=1 -timeout 90s: PASS (23.345 s and 2.866 s).
+- go vet -tags nogui ./internal/gateway ./internal/dotbridge: exit 0.
+- gofmt -l on all owned changed Go files and git diff --check: empty output.
+
+No full repository validation, live Dot/cloud acceptance, deployment or overall
+project completion is claimed by this fix pass. No subagents. Active CLI/GUI
+and provider configuration work was not edited or staged. Polling continues
+through validated ByRequest because Get returns an unchecked DTO.
+- After adding the explicit completed-stream ledger ResponseID equality
+  assertion, the focused completed/concurrent-header/keepalive -race run also
+  passed: exit 0, 33.14 seconds (magpie-dot-task3-ledger-stream-race.log).

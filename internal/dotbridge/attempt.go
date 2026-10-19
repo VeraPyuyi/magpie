@@ -1,16 +1,22 @@
 package dotbridge
 
-import "sync"
+import (
+	"errors"
+	"sync"
+)
+
+// IsDigestConflict reports a reused request identity with different content.
+func IsDigestConflict(err error) bool { return errors.Is(err, errDigestConflict) }
 
 // Snapshot is a read-only copy of attempt state.
 type Snapshot struct {
-	RequestID   string
-	Digest      string
-	JobID       string
-	State       string
-	Mode        string
-	SessionID   string
-	BlockReplay bool
+	RequestID   string `json:"request_id"`
+	Digest      string `json:"digest"`
+	JobID       string `json:"job_id,omitempty"`
+	State       string `json:"state"`
+	Mode        string `json:"mode"`
+	SessionID   string `json:"session_id"`
+	BlockReplay bool   `json:"block_replay"`
 }
 
 // Attempt tracks one Dot submission's acceptance barrier.

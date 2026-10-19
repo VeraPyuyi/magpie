@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/yetone/magpie/internal/access"
 	"github.com/yetone/magpie/internal/dotbridge"
 	"github.com/yetone/magpie/internal/provider"
 )
@@ -50,7 +51,7 @@ func dotHashParts(parts ...string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 func dotScope(r *http.Request) string {
-	key := callerKey(r)
+	key := access.Caller(r.Context()).KeyID
 	if key == "" {
 		key = "local"
 	}
@@ -111,12 +112,13 @@ func (s *Server) serveDot(w http.ResponseWriter, r *http.Request, from provider.
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(cfg.AnswerWaitSeconds)*time.Second)
 	defer cancel()
+	call.To = from // Queue attempts belong in the ledger even without an answer.
 	job, err := conn.Enqueue(ctx, sub, dotScope(r), a)
 	if err != nil {
 		if a.Snapshot().BlockReplay {
 			return 409, dotErrUnknown
 		}
-		if err.Error() == "dot_bridge_digest_conflict" {
+		if dotbridge.IsDigestConflict(err) {
 			return writeError(w, from, 409, "dot request identity conflicts with its saved content"), "dot request identity conflict"
 		}
 		return writeError(w, from, 503, "dot bridge enqueue failed"), "dot bridge enqueue failed"
@@ -132,15 +134,17 @@ func (s *Server) serveDot(w http.ResponseWriter, r *http.Request, from provider.
 			if err != nil {
 				return 409, dotErrFailed
 			}
-			call.To = from
-			call.Usage.ResponseID = job.JobID
+			var rendered struct {
+				ID string `json:"id"`
+			}
+			_ = json.Unmarshal(b, &rendered)
+			call.Usage.ResponseID = rendered.ID
+			// The hold writer serializes header initialization with keepQuiet.
+			// Stream events use wholeAsStream's begun writer and never mutate Header.
 			if streamOf(body) {
-				sw := newSSEWriter(w)
-				for _, e := range wholeEvents(from, b) {
-					sw.event(e.name, e.data)
-				}
+				w.WriteHeader(200)
+				wholeAsStream(w, from, b)
 			} else {
-				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(200)
 				_, _ = w.Write(b)
 			}
@@ -154,13 +158,18 @@ func (s *Server) serveDot(w http.ResponseWriter, r *http.Request, from provider.
 			// currently returns an unchecked DTO, so it cannot authenticate an answer.
 			job, err = conn.ByRequest(ctx, a)
 			if err != nil {
-				return 409, dotErrPending
+				return 409, dotErrUnknown
 			}
 		}
 	}
 }
 func dotJobError(job dotbridge.Job) string {
+	if job.ErrorCode != "" && job.State != dotbridge.StateCancelled {
+		return dotErrFailed
+	}
 	switch job.State {
+	case dotbridge.StateQueued, dotbridge.StateClaimed, dotbridge.StateRunning, dotbridge.StateWaitingUser:
+		return ""
 	case dotbridge.StateFailed, dotbridge.StateOutcomeUnknown:
 		return dotErrFailed
 	case dotbridge.StateCancelled:
@@ -171,8 +180,10 @@ func dotJobError(job dotbridge.Job) string {
 		if job.CancelRequested || job.Result == nil || job.Result.Cancelled || job.Result.ErrorCode != "" || job.ErrorCode != "" || !utf8.ValidString(job.Result.Text) || strings.TrimSpace(job.Result.Text) == "" {
 			return dotErrFailed
 		}
+		return ""
+	default:
+		return dotErrUnknown
 	}
-	return ""
 }
 func dotFailureMessage(snap dotbridge.Snapshot, code string) string {
 	return fmt.Sprintf("%s: inspect the existing Dot request %s (job %s); automatic_redispatch:false", code, snap.RequestID, snap.JobID)

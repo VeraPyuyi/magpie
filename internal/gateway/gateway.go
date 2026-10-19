@@ -2355,12 +2355,21 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		// for a reply that only reasoned to be asked again (#667).
 		hw.thinkingShown = !refusesAfterThinking(c.model) || last && modelFamily(c.model) != ""
 		hw.ctx, hw.alive, hw.streams = r.Context(), kept, streams
+		if c.p.IsDot() {
+			// Configure headers before the watch starts; serveDot writes no raw headers.
+			hw.loop, hw.reloop = nil, false
+			if streams {
+				hw.header.Set("Content-Type", "text/event-stream; charset=utf-8")
+			} else {
+				hw.header.Set("Content-Type", "application/json")
+			}
+		}
 		report := cacheReport
 		if c.p.Account == nil || c.p.Account.Agent != "claude" {
 			report = nil
 		}
 		cacheReportTry(hw, report)
-		if streams && !settings.Load().NoLoopGuard {
+		if streams && !settings.Load().NoLoopGuard && !c.p.IsDot() {
 			// a reply stuck in a loop is ended, not let run to its limit
 			// (#1359)
 			hw.loop = &loopGuard{}
@@ -2819,6 +2828,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 				try.Dot = &snap
 				if r.Context().Err() != nil {
 					call.Status, call.Error = canceled(r.Context())
+					try.Fail = failCanceled
 				} else if call.Status == 200 && call.Error == "" {
 					hw.release()
 					clientResponseID = call.Usage.ResponseID
@@ -2826,12 +2836,24 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 					if hit == nil || !hit.Compact {
 						answered(stuck, c, aff.Turn, call.Usage)
 					}
+					sealedBy = &c
+					if hit != nil && !hit.Compact {
+						ruleAnswered(ruleAt, call.Usage)
+					}
+					for _, at := range nestedAt {
+						ruleAnswered(at, call.Usage)
+					}
 				} else {
 					code := call.Error
 					if code == "" {
 						code = dotErrPending
 					}
+					try.DotError = code
+					try.Fail = failOther
 					call.Status = dotFailure(w, kept, from, snap, code)
+					if kept.sent {
+						call.Status = http.StatusOK
+					}
 					call.Error = dotFailureMessage(snap, code)
 				}
 				try.Status, try.Error = call.Status, call.Error

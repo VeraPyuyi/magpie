@@ -50,7 +50,7 @@ func dotRequirementsOf(from provider.Protocol, body []byte) (dotRequirements, er
 func dotAllowedTopLevel(from provider.Protocol) map[string]bool {
 	common := map[string]bool{
 		"model": true, "stream": true, "user": true, "metadata": true,
-		"prompt_cache_key": true, "store": true, "service_tier": true,
+		"prompt_cache_key": true, "store": true,
 	}
 	if from == provider.Chat {
 		common["messages"] = true
@@ -170,6 +170,9 @@ func dotResponsesItem(item json.RawMessage) (dotbridge.Message, error) {
 	typ := stringField(obj, "type")
 	switch typ {
 	case "message":
+		if err := dotOnlyFields(obj, "type", "role", "content"); err != nil {
+			return dotbridge.Message{}, err
+		}
 		role := stringField(obj, "role")
 		if role == "developer" {
 			return dotbridge.Message{}, fmt.Errorf("developer")
@@ -183,6 +186,9 @@ func dotResponsesItem(item json.RawMessage) (dotbridge.Message, error) {
 		}
 		return dotbridge.Message{Role: role, Content: content}, nil
 	case "input_text":
+		if err := dotOnlyFields(obj, "type", "text"); err != nil {
+			return dotbridge.Message{}, err
+		}
 		text := stringField(obj, "text")
 		if text == "" {
 			return dotbridge.Message{}, fmt.Errorf("input_text")
@@ -200,26 +206,27 @@ func dotChatMessages(raw json.RawMessage) ([]dotbridge.Message, error) {
 	if len(raw) == 0 || dotJSONNull(raw) {
 		return nil, nil
 	}
-	var msgs []struct {
-		Role    string          `json:"role"`
-		Content json.RawMessage `json:"content"`
-	}
+	var msgs []map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &msgs); err != nil {
 		return nil, fmt.Errorf("messages")
 	}
 	out := make([]dotbridge.Message, 0, len(msgs))
 	for _, m := range msgs {
-		if m.Role == "developer" {
+		role := stringField(m, "role")
+		if role == "developer" {
 			return nil, fmt.Errorf("developer")
 		}
-		if m.Role != "system" && m.Role != "user" && m.Role != "assistant" {
-			return nil, fmt.Errorf("role %s", m.Role)
+		if role != "system" && role != "user" && role != "assistant" {
+			return nil, fmt.Errorf("role %s", role)
 		}
-		content, err := dotTextContent(m.Content)
+		if err := dotOnlyFields(m, "role", "content"); err != nil {
+			return nil, err
+		}
+		content, err := dotTextContent(m["content"])
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, dotbridge.Message{Role: m.Role, Content: content})
+		out = append(out, dotbridge.Message{Role: role, Content: content})
 	}
 	return out, nil
 }
@@ -238,6 +245,9 @@ func dotTextContent(raw json.RawMessage) (string, error) {
 	}
 	var b strings.Builder
 	for _, p := range parts {
+		if err := dotOnlyFields(p, "type", "text"); err != nil {
+			return "", err
+		}
 		typ := stringField(p, "type")
 		switch typ {
 		case "text", "input_text", "output_text":
@@ -316,6 +326,11 @@ func dotSubmission(from provider.Protocol, body []byte, requestID, sessionID str
 // dotPlanned avoids parsing Dot's wire requirements for routes that cannot
 // select it, including held candidates which planning may revive later.
 func dotPlanned(cs []candidate, pl planned) bool {
+	for _, w := range append(append([]Weighed{}, pl.left...), pl.unlistedW...) {
+		if w.Provider == provider.DotID {
+			return true
+		}
+	}
 	for _, list := range [][]candidate{cs, pl.held, pl.capped, pl.unlisted} {
 		for _, c := range list {
 			if c.p.IsDot() {
@@ -394,4 +409,20 @@ func stringField(obj map[string]json.RawMessage, key string) string {
 func dotExplicitUnsupported(w http.ResponseWriter, from provider.Protocol, model string, req dotRequirements) {
 	msg := fmt.Sprintf("model %q is not supported by DotControl (%s)", model, strings.Join(req.Unsupported, ", "))
 	writeError(w, from, http.StatusBadRequest, msg)
+}
+
+func dotOnlyFields(obj map[string]json.RawMessage, allowed ...string) error {
+	for key := range obj {
+		found := false
+		for _, name := range allowed {
+			if key == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("unsupported field %s", key)
+		}
+	}
+	return nil
 }

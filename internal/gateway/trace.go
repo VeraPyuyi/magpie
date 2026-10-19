@@ -364,8 +364,9 @@ type Try struct {
 	Reset *AutoReset `json:"reset,omitempty"`
 	// Auto: the models Copilot's Auto picked for it, in turn — where each
 	// pick came from and Copilot's refusal of it — Model being "auto"
-	Auto []provider.AutoPick `json:"auto,omitempty"`
-	Dot  *dotbridge.Snapshot `json:"dot,omitempty"`
+	Auto     []provider.AutoPick `json:"auto,omitempty"`
+	Dot      *dotbridge.Snapshot `json:"dot,omitempty"`
+	DotError string              `json:"dot_error,omitempty"` // semantic job failure; Status is the HTTP wire status
 }
 
 // AutoReset is a Codex reset spent by itself, on Who's account. (Claude's
