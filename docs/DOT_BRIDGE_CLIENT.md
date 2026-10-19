@@ -5,7 +5,9 @@ Magpie talks to DotControl through a dedicated loopback HTTP client in `internal
 ## Configuration
 
 - File: `settings.Dir()/dot-bridge.json`
-- Fields: `enabled`, `address`, `credential` (pairing reference only), `answer_wait_seconds` (default 120, range 1..600)
+- Fields: `enabled`, `address`, `credential` (pairing reference only), `pairing_generation`, `readiness_revision`, `answer_wait_seconds` (default 120, range 1..600)
+- Pairing generation changes on replacement; off/re-enable preserves it and pending request identities. A separate readiness revision invalidates cached proof across processes.
+- `BoundPairingSnapshot` captures configuration and connection together. Journal scopes include the bound `PairingIdentity`, derived from canonical address, credential reference and generation.
 - Pairing secret: keyring service `Magpie/DotBridge`, account = SHA-256 of absolute config directory + pairing reference
 - Dependency: `github.com/zalando/go-keyring` v0.2.6 (pinned)
 
@@ -22,7 +24,7 @@ Magpie talks to DotControl through a dedicated loopback HTTP client in `internal
 - Dedicated `Authorization: Bearer <paired-client-token>` header
 - No redirects, proxy, retries, or legacy MCP/admin credentials
 - 10s per-call budget (or remaining caller deadline if shorter)
-- Response bodies capped at 1 MiB + 1 byte
+- Encoded request and response budgets are 2 MiB; responses are read with a one-byte overflow check. Raw prompt/result budgets remain 256 KiB.
 
 ## Submission state
 
@@ -41,7 +43,7 @@ Local validation follows the queue: at most 32 messages, valid UTF-8, supported 
 
 ## Readiness
 
-Authenticated status includes subscription state/expiry and text/task capabilities. `Status` updates the in-memory readiness cache after credential revalidation and a version-1 response; errors invalidate it. `CachedReady(now)` requires enabled, paired, ready, text capability, active subscription, a nonfuture verification within ten minutes, cache age at most ten seconds, and unexpired proof and subscription. A later refresh invalidates an earlier in-flight refresh. There is no readiness setter or persisted synthetic proof. Missing subscription expiry fails closed.
+Authenticated status includes subscription state/expiry and text/task capabilities. Only a bound paired connection can publish in-memory readiness after credential revalidation and a version-1 response. Publication and consumption require the current pairing identity and readiness revision, so an obsolete connection cannot make a replacement pairing ready; errors invalidate its cache. `CachedReady(now)` requires enabled, paired, ready, text capability, active subscription, a nonfuture verification within ten minutes, cache age at most ten seconds, and unexpired proof and subscription. A later refresh invalidates an earlier in-flight refresh. There is no readiness setter or persisted synthetic proof. Missing subscription expiry fails closed.
 
 ## Local retention and backup
 

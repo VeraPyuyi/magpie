@@ -73,7 +73,7 @@ Rules:
 - `request_id` must stay stable for recovery.
 - No automatic history is attached; only explicit `messages` are sent.
 - `magpie dot submit --file task.json` uses `dotbridge.Enqueue` and the CLI
-  journal scope `cli:<address>:<credential>`.
+  journal scope `cli:<pairing-identity>`, bound to the same connection snapshot.
 
 Outcomes:
 
@@ -94,7 +94,9 @@ magpie dot off
 ```
 
 This disables the bridge locally without deleting pairing credentials or
-pending jobs.
+pending jobs. Re-enabling the same pairing preserves its request namespace but requires fresh readiness. Replacing a pairing creates a new namespace.
+
+Use `magpie dot archives` to inspect retained records from previous pairings without contacting the current queue. Legacy gateway stable-header records block new submission and report their original recovery identity. They require manual reconciliation with their original queue; they are never automatically reassigned or replayed through a new pairing.
 
 ## Security notes
 
