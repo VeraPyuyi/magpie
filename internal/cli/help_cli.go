@@ -55,6 +55,8 @@ func helpFor(args []string) string {
 		return heapUsage
 	case "cpu":
 		return cpuUsage
+	case "dot":
+		return dotUsage
 	case "sessions":
 		return sessionsUsage
 	case "search":

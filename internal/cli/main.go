@@ -115,6 +115,8 @@ const usage = `magpie — one place to pick every agent's model
   magpie healthcheck              exit 0 when the gateway answers (a container's HEALTHCHECK)
   magpie heap [<file>]            a Go heap profile of the running magpie, with its memory numbers, for a report of it using too much memory
   magpie cpu [<file>] [--seconds N]   a Go CPU profile of the running magpie over 30s (5..120) while you use it, for a report of it using too much CPU
+  magpie dot pair <pairing-file> | status | off | submit --file task.json | requests | request <requestID> | job <id> | cancel <id>
+                                  pair DotControl's private version 1 file into the OS keyring; submit background tasks only when status reports task capability
   magpie gateway-key list|add <name>|rotate <id>|remove <id>   manage the keys clients use to call a shared gateway
   magpie gateway-key limit <id> [list|off|reset [n]|remove <n>|[add] day|week|month|<N>d|<N>h --tokens N --cost USD --cache-reads]   a key's own limits, and what it used
   magpie gateway-key models <id> [all|<provider>/<model>|<provider>/* ...]   the models a key may use, every one unless it names some
@@ -372,6 +374,8 @@ func run(args []string) error {
 		return groupCmd(args)
 	case "serve":
 		return serveCmd(args[1:])
+	case "dot":
+		return dotTo(context.Background(), os.Stdout, args[1:])
 	case "gateway-key":
 		return gatewayKeys(args)
 	case "accounts", "account":
