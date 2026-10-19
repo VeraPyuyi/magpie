@@ -82,6 +82,12 @@ func dotReplyError(w http.ResponseWriter, status int, code string) {
 }
 
 func dotRoutes(mux *http.ServeMux) {
+	dotRoutesWithConnection(mux, dotbridge.PairedConnection)
+}
+
+// The factory keeps connection acquisition at one boundary. Tests can replace
+// the pairing immediately before calling the real PairedConnection.
+func dotRoutesWithConnection(mux *http.ServeMux, paired func() (*dotbridge.Connection, error)) {
 	mux.Handle("/api/dot/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "application/json")
@@ -94,7 +100,6 @@ func dotRoutes(mux *http.ServeMux) {
 			dotReplyError(w, 503, "configuration_unavailable")
 			return
 		}
-		scope := dotGUIScope(cfg)
 		path := strings.TrimPrefix(r.URL.Path, "/api/dot/")
 		if path == "off" && r.Method == "POST" {
 			cfg.Enabled = false
@@ -104,6 +109,23 @@ func dotRoutes(mux *http.ServeMux) {
 			}
 			writeJSON(w, map[string]bool{"enabled": false})
 			return
+		}
+		// Enabled routes share one connection-bound identity for journal and I/O.
+		// Disabled listing uses its config snapshot without opening the keyring.
+		var c *dotbridge.Connection
+		scope := dotGUIScope(cfg)
+		if cfg.Enabled {
+			c, err = paired()
+			if err != nil || c.PairingIdentity() == "" {
+				dotReplyError(w, 503, "unverified")
+				return
+			}
+			current, err := dotbridge.LoadConfig()
+			if err != nil || !current.Enabled || dotbridge.PairingIdentity(current) != c.PairingIdentity() {
+				dotReplyError(w, 503, "unverified")
+				return
+			}
+			scope = "gui:" + c.PairingIdentity()
 		}
 		if path == "requests" && r.Method == "GET" {
 			items, err := dotbridge.Requests(scope)
@@ -124,9 +146,9 @@ func dotRoutes(mux *http.ServeMux) {
 			writeJSON(w, map[string]any{"enabled": false, "code": "disabled", "task_available": false})
 			return
 		}
-		// No route may create a connection from browser input.
-		c, err := dotbridge.PairedConnection()
-		if err != nil {
+		// Disabled pairings cannot perform bridge I/O. The enabled connection
+		// above was constructed only from machine configuration, never input.
+		if c == nil {
 			dotReplyError(w, 503, "unverified")
 			return
 		}
