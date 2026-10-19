@@ -271,3 +271,61 @@ pre-existing writable mappings. Unix owner modification during reading remains
 possible. Docs now state those boundaries explicitly. Full GUI/full repository
 suite and live DotControl task probing were not run; no gateway/provider or
 production dotbridge files were changed.
+
+## Final fixture review: displaced fake store in Unix mode control
+
+The Important finding at 27c54fa is correct. The control installed store A,
+then dotPairAccepted installed store B and submitted its own new file. The
+outer store A stayed at zero writes. The manually prepared same-root files
+were never submitted; dotPairRejected also installed another store. This is a
+source-derived deterministic failure, not an observed Unix RED run. The prior
+report's description of that control as establishing the mode-only behavior
+was incorrect.
+
+The control now calls dotSandbox exactly once, creates one authenticated
+loopback status fixture, marshals one valid PairingFile body using that live
+server's address, and writes those identical bytes to the actual same-root
+0600 and 0644 paths. Both modes are applied with chmod/read-back. It calls
+production dotTo directly on these paths; neither convenience import helper
+is called and the fake store is never replaced inside the control.
+
+It checks the following sequence against that same store and status counter:
+
+- 0644 before pairing: error, empty output, zero status requests, zero store
+  writes, original fake token intact, and absent configuration.
+- 0600: exactly one authenticated GET status, one exact-token store write,
+  enabled configuration with the live address and credential reference only,
+  successful output without the token, and both source files retained.
+- 0644 after pairing: error and empty output with no additional status calls
+  or store writes, the saved token intact, and byte-identical config/source
+  files. Error text is checked for token exposure too.
+
+Helper/control-flow review: dotPairAccepted and dotPairRejected each own a
+sandbox and file; they remain appropriate as standalone cases in the Unix
+mode matrix and pairing-link matrix, whose callers do not create or inspect
+an outer store. dotPairFixture/Bytes create only files/server fixtures, not a
+store. dotTempDir resolves the trusted root before mutations; dotChmod checks
+the actual mode. Direct traversal cases create their files before opening,
+assert ancestor symlinks at dotOpenInput, and assert hardlinks at dotRead or
+dotCheckFile on the held descriptor. Ownership inspection uses Fstat on the
+opened regular private file. Intentional links remain unresolved at input.
+No production code or other fixture helpers were changed in this correction.
+
+Executed on Windows at this revision:
+
+- go test -tags nogui ./internal/cli -run '^TestDot' -count=1: PASS, 2.387s.
+- CGO_ENABLED=1 CC=C:/msys64/mingw64/bin/gcc.exe go test -race -tags nogui
+  ./internal/cli -run '^TestDot' -count=1: PASS, 3.929s.
+- Windows CLI vet: PASS.
+- GOOS=linux and GOOS=darwin CLI vet: PASS (cross compilation/static analysis).
+- GOOS=linux and GOOS=darwin go test -c -tags nogui ./internal/cli: PASS;
+  binaries written outside the checkout to the approved opencode temp folder.
+- gofmt -l on the changed test and git diff --check: no output.
+
+The modified control is !windows and was not executed on this Windows host.
+Linux/Darwin evidence is compile/vet only; it establishes no Unix runtime
+PASS or RED. No Unix runtime has become available since the preceding review.
+The Windows results verify the retained focused suite and do not certify the
+Unix mode control. Full repository/GUI/live-cloud checks were not run. Only
+the Unix control test and this appended report are included in this commit;
+GUI/plugin work is left untouched.
