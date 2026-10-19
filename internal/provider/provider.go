@@ -407,6 +407,10 @@ type Provider struct {
 	// Account is set when the provider is an agent the user signed in to
 	// (see account.go); it is derived, never stored.
 	Account *Account `json:"-"`
+
+	// dot marks the built-in DotControl bridge provider, which is never
+	// serialized in providers.json.
+	dot bool
 }
 
 type file struct {
@@ -652,7 +656,13 @@ func allProviders() []Provider {
 		}
 		out = append(out, a)
 	}
-	return ordered(out, f.Order)
+	out = ordered(out, f.Order)
+	if dotMachineEnabled() && !dotStoredCollision() {
+		if _, taken := find(out, DotID); !taken {
+			out = append(out, dotBuiltin())
+		}
+	}
+	return out
 }
 
 // withPicks is the signed-in account a with what the user set on its
@@ -1701,6 +1711,9 @@ func Mask(s string) string {
 // none, is a signed-in agent, or is Vertex AI at a project (whose
 // credentials are read when a request is signed).
 func (p Provider) Ready() bool {
+	if p.IsDot() {
+		return dotMachineEnabled()
+	}
 	if p.IsVertex() {
 		// signed with a Google token, at the address its project makes
 		return p.vertexBase() != ""

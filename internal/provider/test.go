@@ -35,6 +35,12 @@ type Result struct {
 // sees, and reports what came back.
 func (p Provider) Test(ctx context.Context) []Result {
 	ctx = p.Via(ctx)
+	if p.IsDot() {
+		if why := dotProbeRequired(DotTextModel); why != "" {
+			return []Result{{Protocol: Chat, Model: DotTextModel, Error: why}}
+		}
+		return []Result{{Protocol: Chat, Model: DotTextModel, OK: true, Status: http.StatusOK}}
+	}
 	if p.DecideOnly() {
 		return p.testDecide(ctx)
 	}
@@ -257,6 +263,12 @@ func (p Provider) TestModels(ctx context.Context, models []string) []Result {
 }
 
 func (p Provider) testOne(ctx context.Context, model string) Result {
+	if p.IsDot() {
+		if why := dotProbeRequired(model); why != "" {
+			return Result{Protocol: Chat, Model: model, Error: why}
+		}
+		return Result{Protocol: Chat, Model: model, OK: true, Status: http.StatusOK}
+	}
 	if pat, off := ModelDisabled(p.ID, model); off {
 		// the user disabled it (#1867): not even a test reaches it
 		return Result{Model: model, Error: fmt.Sprintf("model %s/%s is disabled in magpie (it matches %q in Settings › Models › Disabled models)", p.ID, model, pat)}

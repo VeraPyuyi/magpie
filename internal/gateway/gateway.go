@@ -1738,6 +1738,13 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		turnedAway()
 		return
 	}
+	dotReq, dotReqErr := dotRequirementsOf(from, body)
+	if dotReqErr != nil {
+		call.Status, call.Error = 400, "invalid request"
+		writeError(w, from, 400, dotReqErr.Error())
+		turnedAway()
+		return
+	}
 	// a routing group's rules pick the member that goes first, looked at
 	// before any image is taken out of the request: one may be for images
 	g, ms, isGroup := provider.FindGroup(asked)
@@ -2005,6 +2012,13 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			members = groupKeeps(keyWho, g, ms)
 		}
 		cands, pl, accountHeld = allowedCandidates(who, cands, pl, members)
+	}
+	cands, pl = dotCandidates(cands, pl, dotReq)
+	if !dotReq.ok() && (p.IsDot() || (!isGroup && model == provider.DotTextModel)) {
+		call.Status, call.Error = 400, "unsupported for dot"
+		dotExplicitUnsupported(w, from, call.Model, dotReq)
+		turnedAway()
+		return
 	}
 	// a conversation that stays strictly where it is goes on on its
 	// account past the usage cap set on it, and is refused there, not
@@ -2406,6 +2420,18 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		}
 		// a middleware's onProvider changes what this provider is sent
 		attemptBody = triedOn(r.Context(), c.p, c.model, attemptBody)
+		if c.p.IsDot() {
+			recheck, recheckErr := dotRequirementsOf(from, attemptBody)
+			if recheckErr != nil {
+				call.Status, call.Error = 400, "invalid request"
+				failTo(w, kept, from, 400, recheckErr.Error())
+				break
+			}
+			if !recheck.ok() {
+				skipped = append(skipped, c.label()+": unsupported for dot")
+				continue
+			}
+		}
 		if !last && s.antigravityForeseen(c.p, from, attemptBody) {
 			// Antigravity would only turn it away, as it did lately, and
 			// someone after it may answer: it isn't asked, and nothing is
