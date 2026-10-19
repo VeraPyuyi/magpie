@@ -103,6 +103,27 @@ func TestDotProviderIsOptIn(t *testing.T) {
 	}
 }
 
+// Bare text follows the normal provider order, so enabling Dot never
+// shadows an existing provider exposing its own text model.
+func TestDotBareTextResolution(t *testing.T) {
+	enableDotBridgeForTest(t)
+	p, model, ok := Resolve("text")
+	if !ok || !p.IsDot() || model != DotTextModel {
+		t.Fatalf("Dot-only bare text: provider=%s model=%s ok=%v", p.ID, model, ok)
+	}
+	if err := Save(Provider{ID: "other", Name: "Other", Key: "k", Models: []string{"text"}, Chat: "http://127.0.0.1:1/v1"}); err != nil {
+		t.Fatal(err)
+	}
+	p, model, ok = Resolve("text")
+	if !ok || p.IsDot() || p.ID != "other" || model != "text" {
+		t.Fatalf("shared bare text: provider=%s model=%s ok=%v", p.ID, model, ok)
+	}
+	p, _, ok = Resolve("dot/text")
+	if !ok || !p.IsDot() {
+		t.Fatal("qualified dot/text must still resolve to Dot")
+	}
+}
+
 func TestDotModelAllowList(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	if len(All()) != 0 {

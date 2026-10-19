@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/yetone/magpie/internal/access"
+	"github.com/yetone/magpie/internal/dotbridge"
 	"github.com/yetone/magpie/internal/provider"
 	"github.com/yetone/magpie/internal/usage"
 )
@@ -364,6 +365,7 @@ type Try struct {
 	// Auto: the models Copilot's Auto picked for it, in turn — where each
 	// pick came from and Copilot's refusal of it — Model being "auto"
 	Auto []provider.AutoPick `json:"auto,omitempty"`
+	Dot  *dotbridge.Snapshot `json:"dot,omitempty"`
 }
 
 // AutoReset is a Codex reset spent by itself, on Who's account. (Claude's

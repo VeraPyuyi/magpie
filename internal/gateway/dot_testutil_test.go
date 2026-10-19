@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,13 +16,18 @@ import (
 
 var errDotNotPaired = errors.New("dot_bridge_not_paired")
 
-type dotMemStore struct{ data map[string]string }
+type dotMemStore struct {
+	mu   sync.RWMutex
+	data map[string]string
+}
 
 func newDotMemStore() *dotMemStore { return &dotMemStore{data: map[string]string{}} }
 
 func (s *dotMemStore) key(service, account string) string { return service + "\x00" + account }
 
 func (s *dotMemStore) Get(service, account string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	v, ok := s.data[s.key(service, account)]
 	if !ok {
 		return "", errDotNotPaired
@@ -30,22 +36,30 @@ func (s *dotMemStore) Get(service, account string) (string, error) {
 }
 
 func (s *dotMemStore) Set(service, account, secret string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.data[s.key(service, account)] = secret
 	return nil
 }
 
 func (s *dotMemStore) Delete(service, account string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	delete(s.data, s.key(service, account))
 	return nil
 }
 
-func enableDotBridgeForGateway(t *testing.T) *httptest.Server {
+func enableDotBridgeForGateway(t *testing.T, jobs ...http.Handler) *httptest.Server {
 	t.Helper()
 	dotbridge.SetCredentialStore(newDotMemStore())
 	t.Cleanup(func() { dotbridge.SetCredentialStore(nil) })
 	now := time.Now().UTC()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/dot-bridge/v1/status" {
+			if len(jobs) > 0 {
+				jobs[0].ServeHTTP(w, r)
+				return
+			}
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}

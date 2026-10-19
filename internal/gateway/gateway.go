@@ -1738,13 +1738,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		turnedAway()
 		return
 	}
-	dotReq, dotReqErr := dotRequirementsOf(from, body)
-	if dotReqErr != nil {
-		call.Status, call.Error = 400, "invalid request"
-		writeError(w, from, 400, dotReqErr.Error())
-		turnedAway()
-		return
-	}
+	// Keep Dot's original wire for preflight if planning selects a Dot
+	// candidate; image normalization must not make unsupported input fit.
+	dotBody := body
 	// a routing group's rules pick the member that goes first, looked at
 	// before any image is taken out of the request: one may be for images
 	g, ms, isGroup := provider.FindGroup(asked)
@@ -2013,12 +2009,20 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		}
 		cands, pl, accountHeld = allowedCandidates(who, cands, pl, members)
 	}
-	cands, pl = dotCandidates(cands, pl, dotReq)
-	if !dotReq.ok() && (p.IsDot() || (!isGroup && model == provider.DotTextModel)) {
-		call.Status, call.Error = 400, "unsupported for dot"
-		dotExplicitUnsupported(w, from, call.Model, dotReq)
-		turnedAway()
-		return
+	// Dot's capabilities constrain only Dot candidates. Other providers keep
+	// accepting their own wire shapes, including tool results and images.
+	if !isGroup && p.IsDot() || dotPlanned(cands, pl) {
+		dotReq, dotReqErr := dotRequirementsOf(from, dotBody)
+		if dotReqErr != nil {
+			dotReq.Unsupported = append(dotReq.Unsupported, dotReqErr.Error())
+		}
+		if !dotReq.ok() && !isGroup && p.IsDot() {
+			call.Status, call.Error = 400, "unsupported for dot"
+			dotExplicitUnsupported(w, from, call.Model, dotReq)
+			turnedAway()
+			return
+		}
+		cands, pl = dotCandidates(cands, pl, dotReq)
 	}
 	// a conversation that stays strictly where it is goes on on its
 	// account past the usage cap set on it, and is refused there, not
@@ -2365,7 +2369,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		// a member of a group in the group is timed by the innermost
 		// group that sets a FirstToken (#2246), else by the group asked for
 		firstToken := cmp.Or(c.firstToken, g.FirstToken)
-		if isGroup && firstToken > 0 && !last && streams {
+		if isGroup && firstToken > 0 && !last && streams && !c.p.IsDot() {
 			// slow to start, the next member is asked (Group.FirstToken)
 			hw.firstWait = time.Duration(firstToken) * time.Second
 		}
@@ -2420,18 +2424,6 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		}
 		// a middleware's onProvider changes what this provider is sent
 		attemptBody = triedOn(r.Context(), c.p, c.model, attemptBody)
-		if c.p.IsDot() {
-			recheck, recheckErr := dotRequirementsOf(from, attemptBody)
-			if recheckErr != nil {
-				call.Status, call.Error = 400, "invalid request"
-				failTo(w, kept, from, 400, recheckErr.Error())
-				break
-			}
-			if !recheck.ok() {
-				skipped = append(skipped, c.label()+": unsupported for dot")
-				continue
-			}
-		}
 		if !last && s.antigravityForeseen(c.p, from, attemptBody) {
 			// Antigravity would only turn it away, as it did lately, and
 			// someone after it may answer: it isn't asked, and nothing is
@@ -2584,6 +2576,30 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 				attemptBody, updated = b, true
 			}
 		}
+		// Check the final body after middleware, output limits, effort and
+		// tier rewrites, before a Dot attempt can queue or submit anything.
+		var dotRequest *http.Request
+		if c.p.IsDot() {
+			recheck, err := dotRequirementsOf(from, attemptBody)
+			if err != nil {
+				recheck.Unsupported = append(recheck.Unsupported, err.Error())
+			}
+			if !recheck.ok() {
+				if !isGroup {
+					call.Status, call.Error = 400, "unsupported for dot"
+					dotExplicitUnsupported(w, from, call.Model, recheck)
+					break
+				}
+				skipped = append(skipped, c.label()+": unsupported for dot")
+				continue
+			}
+			dotRequest, err = prepareDot(r, from, attemptBody)
+			if err != nil {
+				call.Status, call.Error = 400, err.Error()
+				failTo(w, kept, from, call.Status, call.Error)
+				break
+			}
+		}
 		s.trace.update(tr, func(t *Route) {
 			t.imageProvider = c.p.ID
 			t.Tries = append(t.Tries, Try{ID: c.rest, Model: c.model, Effort: sent, Picked: picked, Fixed: fixed, RuleEffort: ruled, Fast: fast, Start: began})
@@ -2615,7 +2631,11 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		} else {
 			// a stream that fails before anything is said is let go at
 			// once (hw.stop), not read on until the vendor hangs up
-			ctx, stop := context.WithCancel(withWireAt(r.Context(), at))
+			attemptContext := r.Context()
+			if dotRequest != nil {
+				attemptContext = dotRequest.Context()
+			}
+			ctx, stop := context.WithCancel(withWireAt(attemptContext, at))
 			if isGroup {
 				ctx = groupTry(ctx)
 			}
@@ -2677,7 +2697,11 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 					// the slot is the vendor's until the reply is read to
 					// its end or the agent has gone: attempt returns then
 					defer release()
-					defer hw.watch()()
+					if c.p.IsDot() {
+						defer hw.watchDot()()
+					} else {
+						defer hw.watch()()
+					}
 					defer notePhase(ctx, "upstream")()
 					call.Status, call.Error = s.attempt(hw, r.WithContext(ctx), from, c.p, c.model, attemptBody, &call)
 				}()
@@ -2786,6 +2810,35 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		if at := wrote.Load(); at > 0 && call.TTFT > 0 {
 			sentMs = min(max(time.Unix(0, at).Sub(start).Milliseconds(), 1), call.TTFT)
 			ownMs, retriedMs, queuedMs = splitSent(sentMs, start, firstBegan, began, asked.Load(), queued)
+		}
+		// The client-owned barrier precedes every cancellation, retry and
+		// fallback decision, regardless of status or held-writer state.
+		if dotRequest != nil {
+			snap := dotAttemptOf(dotRequest.Context()).Snapshot()
+			if snap.BlockReplay {
+				try.Dot = &snap
+				if r.Context().Err() != nil {
+					call.Status, call.Error = canceled(r.Context())
+				} else if call.Status == 200 && call.Error == "" {
+					hw.release()
+					clientResponseID = call.Usage.ResponseID
+					servedCandidate(c, 0)
+					if hit == nil || !hit.Compact {
+						answered(stuck, c, aff.Turn, call.Usage)
+					}
+				} else {
+					code := call.Error
+					if code == "" {
+						code = dotErrPending
+					}
+					call.Status = dotFailure(w, kept, from, snap, code)
+					call.Error = dotFailureMessage(snap, code)
+				}
+				try.Status, try.Error = call.Status, call.Error
+				watched.attempt(call, try, c.p.ID, sent, hw, capture)
+				s.trace.update(tr, func(t *Route) { t.Tries[len(t.Tries)-1] = try })
+				break
+			}
 		}
 		if r.Context().Err() != nil && !hw.ended {
 			// the agent went away: nobody failed, and nobody else is asked
@@ -3504,6 +3557,9 @@ func sinceStart(before, d time.Duration) int64 {
 // attempt sends a request to one provider. call.To stays empty when the
 // provider has no endpoint to send it to.
 func (s *Server) attempt(w http.ResponseWriter, r *http.Request, from provider.Protocol, p provider.Provider, model string, body []byte, call *Call) (int, string) {
+	if p.IsDot() {
+		return s.serveDot(w, r, from, p, model, body, call)
+	}
 	// Normalize for the actual destination, separately on each fallback.
 	// Native ChatGPT accounts accept standalone tool outputs themselves.
 	if from == provider.Responses && (p.Account == nil || p.Account.Agent != "codex") {

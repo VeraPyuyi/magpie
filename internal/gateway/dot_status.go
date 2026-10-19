@@ -15,13 +15,12 @@ func refreshDotStatus(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {
-		cfg, err := dotbridge.LoadConfig()
-		if err != nil || !cfg.Enabled {
-			return
-		}
-		conn, err := dotbridge.PairedConnection()
-		if err == nil {
-			_, _ = conn.Status(ctx)
+		// A disabled or unreadable boot config may be enabled or repaired
+		// while serving. Keep polling until the server itself stops.
+		if cfg, err := dotbridge.LoadConfig(); err == nil && cfg.Enabled {
+			if conn, err := dotbridge.PairedConnection(); err == nil {
+				_, _ = conn.Status(ctx)
+			}
 		}
 		select {
 		case <-ctx.Done():

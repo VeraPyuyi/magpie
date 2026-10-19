@@ -71,6 +71,67 @@ text is never taken as a suggestion, as Codex would put it in the user's
 composer as their next message, so it gives no prediction and the call is
 recorded as a prediction failure (`noPrediction`).
 
+## Dot text capability preflight
+
+The machine-local DotControl provider accepts text on Chat Completions and
+Responses. [`dot_requirements.go`](../../internal/gateway/dot_requirements.go)
+checks its wire allowlist only when the resolved single provider or the
+planned candidates include Dot. Other providers retain their existing
+handling of tools, images, developer messages and Responses function items;
+Dot's parser never rejects those providers' requests.
+
+An unsupported single request resolved to `dot/text` returns a local 400.
+In a routing group, unsupported Dot candidates are removed by `dotCandidates`,
+even when Dot is the group's first member. Other members remain eligible.
+Each Dot candidate is checked again after middleware, output limits,
+reasoning effort and service-tier changes, before queueing or submission.
+Unsupported group candidates are skipped at this point too.
+
+Bare `text` follows normal model resolution: `Resolve` takes the first
+provider exposing it in Providers order, which includes Dot only when ready.
+The synthetic Dot provider is appended after stored providers, so their
+own `text` models keep precedence. With found groups on, the gateway may
+route a shared bare `text` through the usual found group. Use `dot/text`
+to select Dot explicitly; its capability rules follow the resolved
+provider, never the model name alone.
+
+`refreshDotStatus` in [`dot_status.go`](../../internal/gateway/dot_status.go)
+continues polling every five seconds through a disabled or unreadable
+configuration, so enabling and pairing while serving takes effect without
+a gateway restart. Dot submissions use the dedicated bridge path, before
+the generic HTTP forwarder; `dot://bridge` only marks its supported APIs.
+
+`attempt` branches to [`serveDot`](../../internal/gateway/dot.go) before any
+protocol normalization, proxy selection, translation or HTTP forwarding.
+`serve` prepares the immutable `dotSubmission` and binds the client's Attempt
+on a private context key before calling `attempt`. `Enqueue` reserves the
+journal identity before POST, and the client sets its replay barrier before
+starting that single POST. After the writer watch has joined and try timings
+are collected, `serve` checks `Snapshot.BlockReplay` before cancellation,
+slow-start handling, retries, patience replans or fallback. Accepted and
+uncertain submissions end the candidate loop while retaining shared trace,
+usage and recent-call bookkeeping. `Try.Dot` contains only the identity and
+state snapshot. Vendor headers and response JSON cannot create this state.
+
+Dot waits use the configured answer budget (120 seconds by default, at most
+600) and the bridge client's short HTTP budget. Group FirstToken and reasoning
+loop retries do not apply. Polls use `ByRequest` so every receipt and result
+is checked against the attempt identity. While waiting, streaming callers
+receive only SSE comments. A completed nonempty result is buffered and emitted
+once in Chat or Responses format, without invented usage or reasoning.
+Timeouts return 409 `dot_job_pending`, or `dot_acceptance_unknown` after an
+uncertain submission, with request/job references and
+`automatic_redispatch:false`. If comments already sent HTTP 200, the same
+metadata is sent as a native SSE error with no successful completion.
+Disconnecting stops the wait and never sends a cancellation request.
+
+`X-Magpie-Dot-Request-ID` supplies identity only. Valid explicit IDs are hashed
+with caller and agent scope; repeated matching requests query the existing
+job and changed content conflicts locally. Without this header, each HTTP
+request receives a random identity, so client retries cannot be deduplicated
+across requests. Session isolation uses an explicit session header or the
+random request identity, never a prompt hash or routing trace ID.
+
 ## Runtime path
 
 1. `handle(proto)` reads the body and the model (`requestBody`, `requestModel`), then calls `serveAgent`. Every route that reads an agent's body (each API, count_tokens, Gemini's, embeddings, images, videos, System One, the Codex backend path) reads it through `readBoundedRequestBody` in [`request_bounds.go`](../../internal/gateway/request_bounds.go). It decodes a `Content-Encoding` of `gzip` or `zstd` (`decodedBody`; Codex sends zstd to a custom provider's `/v1/responses` too, #1223) and drops the header, so the provider is sent plain JSON, with one exception: a ChatGPT account's turn (POST `CodexBase`/responses, from the accounts loop in `forwardOnce` or relayed by `codexUpstreamOn`) is compressed again with zstd and a window of at most 2 MiB, as Codex's own client sends it (`provider.CodexCompressed`; openai/codex `responses_request_compression` and `http-client/src/request.rs`). It is compressed once the body is final, and again on each try. `/responses/compact`, an API key's requests and every other provider stay plain. Sent plain, a 1.1 MB text-only turn was answered 503 (ylorn on X). The plain body is what magpie keeps and shows, and `codexDropped` judges a reset by the bytes that went on the wire. `codexDropped` also reads Envoy's 507 "exceeded request buffer limit while retrying upstream" (the backend failed and the front couldn't retry a body that large) as that reset, at any size, told as a 503 so magpie, Codex and pi ask again and nobody rests (#2034). The size limit (`defaultBodyLimit`, 512 MB) holds for the decoded bytes (413), and any other encoding is refused 415. It was 128 MB until a long Codex session that had read many images went past it decoded, its inline screenshots resent each turn, and got the 413 on all five of Codex's retries (#1422, `TestImageHeavyCodexTurnIsRead`). magpie's own 413 says it is magpie's gateway limit, with the size, and that the provider was not asked (`overLimit`); `writeError` adds to any 413 it isn't holding that this is a byte limit, not the model's context, and to `/compact` or start a new conversation (`TestOverLimitSaysWhoseAndWhatToDo`). Every shape but Gemini's types a 413 `request_too_large`, Anthropic's own type, which pi's overflow table knows: pi compacts and tries once more rather than stopping on an OpenAI-shaped `api_error` (@wilsonxuuuu on X, `TestPayloadTooLargeSaysRequestTooLargeToPi`). `keyLimited` reads a limited key's compressed body the same way, so its reservation is the decoded size. `serveAgent` runs the [middleware](gateway-middleware.md) chain, then `serve`.

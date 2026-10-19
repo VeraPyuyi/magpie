@@ -91,7 +91,8 @@ func dotChatShape(raw map[string]json.RawMessage, out *dotRequirements) error {
 	}
 	msgs, err := dotChatMessages(raw["messages"])
 	if err != nil {
-		return err
+		out.Unsupported = append(out.Unsupported, err.Error())
+		return nil
 	}
 	if len(msgs) == 0 {
 		out.Unsupported = append(out.Unsupported, "messages")
@@ -111,7 +112,8 @@ func dotResponsesShape(raw map[string]json.RawMessage, out *dotRequirements) err
 	}
 	msgs, err := dotResponsesMessages(raw)
 	if err != nil {
-		return err
+		out.Unsupported = append(out.Unsupported, err.Error())
+		return nil
 	}
 	if len(msgs) == 0 {
 		out.Unsupported = append(out.Unsupported, "input")
@@ -309,6 +311,19 @@ func dotSubmission(from provider.Protocol, body []byte, requestID, sessionID str
 		SessionID: sessionID,
 		Messages:  msgs,
 	}, nil
+}
+
+// dotPlanned avoids parsing Dot's wire requirements for routes that cannot
+// select it, including held candidates which planning may revive later.
+func dotPlanned(cs []candidate, pl planned) bool {
+	for _, list := range [][]candidate{cs, pl.held, pl.capped, pl.unlisted} {
+		for _, c := range list {
+			if c.p.IsDot() {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func dotCandidates(cs []candidate, pl planned, req dotRequirements) ([]candidate, planned) {
