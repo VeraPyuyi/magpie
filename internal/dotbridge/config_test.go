@@ -13,7 +13,7 @@ import (
 func TestDotConsentAndCredentials(t *testing.T) {
 	store := newMemStore()
 	SetCredentialStore(store)
-	t.Cleanup(func() { SetCredentialStore(nil) })
+	t.Cleanup(func() { SetCredentialStore(newMemStore()) })
 
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)

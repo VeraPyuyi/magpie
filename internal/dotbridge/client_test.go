@@ -3,6 +3,7 @@ package dotbridge
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -63,7 +64,15 @@ func (s *bridgeServer) handler() http.Handler {
 		case r.Method == http.MethodPost && r.URL.Path == "/dot-bridge/v1/jobs":
 			s.posts.Add(1)
 			if s.dropAfter && s.storeJob {
-				w.WriteHeader(http.StatusAccepted)
+				h, ok := w.(http.Hijacker)
+				if !ok {
+					panic("fixture requires hijack")
+				}
+				conn, _, err := h.Hijack()
+				if err != nil {
+					panic(err)
+				}
+				_ = conn.Close()
 				return
 			}
 			var sub Submission
@@ -103,8 +112,10 @@ func newTestConnection(t *testing.T, srv *httptest.Server, token string) *Connec
 	if err != nil {
 		t.Fatal(err)
 	}
-	conn.client = srv.Client()
-	conn.baseURL = srv.URL
+	transport := conn.client.Transport.(*http.Transport)
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, srv.Listener.Addr().String())
+	}
 	return conn
 }
 

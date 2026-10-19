@@ -6,8 +6,8 @@ import (
 	"errors"
 	"path/filepath"
 
-	"github.com/zalando/go-keyring"
 	"github.com/yetone/magpie/internal/settings"
+	"github.com/zalando/go-keyring"
 )
 
 const keyringService = "Magpie/DotBridge"

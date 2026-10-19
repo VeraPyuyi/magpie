@@ -16,9 +16,9 @@ const (
 	StateFailed          = "failed"
 	StateOutcomeUnknown  = "outcome_unknown"
 
-	attemptNotSubmitted       = "not_submitted"
-	attemptAcceptanceUnknown  = "acceptance_unknown"
-	attemptAccepted           = "accepted"
+	attemptNotSubmitted      = "not_submitted"
+	attemptAcceptanceUnknown = "acceptance_unknown"
+	attemptAccepted          = "accepted"
 
 	maxMessages       = 32
 	maxMessageBytes   = 256 * 1024
@@ -76,27 +76,41 @@ type Result struct {
 
 // Job is the bridge job DTO.
 type Job struct {
-	Version         int        `json:"version"`
-	JobID           string     `json:"job_id"`
-	RequestID       string     `json:"request_id"`
-	RequestDigest   string     `json:"request_digest"`
-	Mode            string     `json:"mode"`
-	SessionID       string     `json:"session_id"`
-	State           string     `json:"state"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
-	CancelRequested bool       `json:"cancel_requested"`
-	Result          *Result    `json:"result,omitempty"`
-	ErrorCode       string     `json:"error_code,omitempty"`
+	Version         int       `json:"version"`
+	JobID           string    `json:"job_id"`
+	RequestID       string    `json:"request_id"`
+	RequestDigest   string    `json:"request_digest"`
+	Mode            string    `json:"mode"`
+	SessionID       string    `json:"session_id"`
+	State           string    `json:"state"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+	CancelRequested bool      `json:"cancel_requested"`
+	Result          *Result   `json:"result,omitempty"`
+	ErrorCode       string    `json:"error_code,omitempty"`
 }
 
 // Status is the authenticated /dot-bridge/v1/status payload.
 type Status struct {
-	Version    int       `json:"version"`
-	Enabled    bool      `json:"enabled"`
-	Paired     bool      `json:"paired"`
-	Ready      bool      `json:"ready"`
-	Code       string    `json:"code"`
-	VerifiedAt time.Time `json:"verified_at,omitempty"`
-	ExpiresAt  time.Time `json:"expires_at,omitempty"`
+	Version      int                `json:"version"`
+	Enabled      bool               `json:"enabled"`
+	Paired       bool               `json:"paired"`
+	Ready        bool               `json:"ready"`
+	Code         string             `json:"code"`
+	VerifiedAt   time.Time          `json:"verified_at,omitempty"`
+	ExpiresAt    time.Time          `json:"expires_at,omitempty"`
+	Subscription SubscriptionStatus `json:"subscription"`
+	Capabilities Capabilities       `json:"capabilities"`
+}
+
+// SubscriptionStatus describes the current authenticated subscription.
+type SubscriptionStatus struct {
+	State     string    `json:"state"`
+	ExpiresAt time.Time `json:"expires_at,omitempty"`
+}
+
+// Capabilities describes abilities verified by the bridge policy.
+type Capabilities struct {
+	Text  bool `json:"text"`
+	Tasks bool `json:"tasks"`
 }

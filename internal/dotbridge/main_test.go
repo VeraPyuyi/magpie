@@ -7,5 +7,6 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	credentialStore = newMemStore()
 	testenv.Main(m)
 }

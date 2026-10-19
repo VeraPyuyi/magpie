@@ -83,14 +83,14 @@ func (a *Attempt) accept(job Job) error {
 }
 
 func (a *Attempt) restore(snapshot Snapshot) error {
-	if snapshot.RequestID == "" || snapshot.Digest == "" || snapshot.Mode == "" || snapshot.SessionID == "" {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if snapshot.RequestID == "" || snapshot.Digest == "" || snapshot.Mode == "" {
 		return errInvalidBody
 	}
 	if a.requestID != "" && (a.requestID != snapshot.RequestID || a.digest != snapshot.Digest || a.mode != snapshot.Mode || a.sessionID != snapshot.SessionID) {
 		return errDigestConflict
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
 	if a.requestID == "" {
 		a.requestID = snapshot.RequestID
 		a.digest = snapshot.Digest

@@ -9,7 +9,9 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -59,6 +61,15 @@ func parseLoopbackAddress(address string) (string, error) {
 	}
 	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
 		host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	}
+	for _, digit := range port {
+		if digit < '0' || digit > '9' {
+			return "", errAddress
+		}
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n < 1 || n > 65535 {
+		return "", errAddress
 	}
 	ip, err := netip.ParseAddr(host)
 	if err != nil || !ip.IsLoopback() {
@@ -136,11 +147,14 @@ func (c *Connection) Submit(ctx context.Context, sub Submission, attempt *Attemp
 	if snap := attempt.Snapshot(); snap.Digest != digest || snap.RequestID != sub.RequestID {
 		return Job{}, errDigestConflict
 	}
-	attempt.beginSubmit()
+	if sub.Messages == nil {
+		sub.Messages = []Message{}
+	}
 	b, err := json.Marshal(sub)
 	if err != nil {
 		return Job{}, err
 	}
+	attempt.beginSubmit()
 	resp, body, err := c.do(ctx, http.MethodPost, "/dot-bridge/v1/jobs", b)
 	if err != nil {
 		return Job{}, err
@@ -287,6 +301,12 @@ func (c *Connection) Resume(ctx context.Context, scope, requestID string) (Job, 
 
 // Status fetches bridge readiness from the local API.
 func (c *Connection) Status(ctx context.Context) (Status, error) {
+	readyCache.Lock()
+	readyCache.status = Status{}
+	readyCache.at = time.Time{}
+	readyCache.generation++
+	generation := readyCache.generation
+	readyCache.Unlock()
 	resp, body, err := c.do(ctx, http.MethodGet, "/dot-bridge/v1/status", nil)
 	if err != nil {
 		return Status{}, err
@@ -298,10 +318,30 @@ func (c *Connection) Status(ctx context.Context) (Status, error) {
 	if err := json.Unmarshal(body, &st); err != nil {
 		return Status{}, errReceipt
 	}
+	if st.Version != 1 {
+		return Status{}, errReceipt
+	}
+	readyCache.Lock()
+	if readyCache.generation == generation {
+		readyCache.status = st
+		readyCache.at = time.Now()
+	}
+	readyCache.Unlock()
 	return st, nil
 }
 
 // CachedReady reports whether a recently validated status cache is ready.
+var readyCache struct {
+	sync.Mutex
+	status     Status
+	at         time.Time
+	generation uint64
+}
+
 func CachedReady(now time.Time) bool {
-	return false
+	readyCache.Lock()
+	defer readyCache.Unlock()
+	s := readyCache.status
+	age := now.Sub(readyCache.at)
+	return age >= 0 && age <= 10*time.Second && s.Version == 1 && s.Enabled && s.Paired && s.Ready && s.Capabilities.Text && s.Subscription.State == "active" && !s.VerifiedAt.IsZero() && !s.VerifiedAt.After(now) && now.Before(s.VerifiedAt.Add(10*time.Minute)) && now.Before(s.ExpiresAt) && now.Before(s.Subscription.ExpiresAt)
 }

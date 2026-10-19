@@ -13,14 +13,14 @@ import (
 )
 
 type journalRecord struct {
-	Scope     string `json:"scope"`
-	RequestID string `json:"request_id"`
-	Digest    string `json:"digest"`
-	Mode      string `json:"mode"`
-	SessionID string `json:"session_id"`
-	State     string `json:"state"`
-	JobID     string `json:"job_id,omitempty"`
-	BlockReplay bool `json:"block_replay"`
+	Scope       string `json:"scope"`
+	RequestID   string `json:"request_id"`
+	Digest      string `json:"digest"`
+	Mode        string `json:"mode"`
+	SessionID   string `json:"session_id"`
+	State       string `json:"state"`
+	JobID       string `json:"job_id,omitempty"`
+	BlockReplay bool   `json:"block_replay"`
 }
 
 type journalFile struct {
@@ -34,6 +34,8 @@ var (
 )
 
 func journalPath() string {
+	journalMu.Lock()
+	defer journalMu.Unlock()
 	if journalPathOverride != "" {
 		return journalPathOverride
 	}

@@ -1,0 +1,1 @@
+{"request_id":"req-x","mode":"task","session_id":"sess-y","messages":[{"role":"system","content":"\u003c规则\u003e\u0026\n"},{"role":"user","content":"你好 😀"}],"task":"执行\t任务"}
