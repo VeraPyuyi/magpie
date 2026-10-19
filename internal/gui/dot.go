@@ -1,8 +1,6 @@
 package gui
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net"
@@ -70,8 +68,7 @@ func dotLocal(r *http.Request) bool {
 // paths or pairing JSON. Scope binds GUI requests to the paired machine, separate
 // from CLI and gateway journals; only bounded identity snapshots are returned.
 func dotGUIScope(cfg dotbridge.Config) string {
-	sum := sha256.Sum256([]byte(cfg.Address + "\x00" + cfg.Credential))
-	return "gui:" + hex.EncodeToString(sum[:])
+	return "gui:" + dotbridge.PairingIdentity(cfg)
 }
 
 func dotTaskAvailable(st dotbridge.Status) bool {

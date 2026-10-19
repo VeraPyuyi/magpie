@@ -20,12 +20,12 @@ for (const engine of process.env.BROWSER ? [process.env.BROWSER] : ['chromium','
     if(u.pathname==='/api/state')return json({agents:[],profiles:[],settings:{lang,theme:'light'}});
     if(u.pathname==='/api/providers')return json({providers:[],presets:[],gateway:{running:true,url:'http://127.0.0.1:3999',calls:[],groups:[]}});
     if(u.pathname==='/api/dot/status')return json({enabled:true,code:available?'ready':'unverified',task_available:available,capabilities:{tasks:available}});
-    if(u.pathname==='/api/dot/requests')return json(identity?[{...identity,state:'acceptance_unknown'}]:[]);
+    if(u.pathname==='/api/dot/requests')return json(identity?[{request_id:identity.request_id,session_id:identity.session_id,mode:'task',digest:'a'.repeat(64),state:'acceptance_unknown',block_replay:true}]:[]);
     if(u.pathname==='/api/dot/jobs'){posts.push(r.postDataJSON());identity=posts[0];return route.fulfill({status:409,json:{code:'outcome_unknown'}});}
     if(u.pathname.startsWith('/api/dot/requests/')){
      gets.push(u.pathname);
      if(u.pathname.endsWith('/cancel')){cancelled++;return json({code:'cancel_intent_acknowledged'});}
-     return json({...identity,job_id:'job-fixture',state:'completed',result:{text:'<img src=x onerror="window.pwned=1">',artifacts:[{url:'javascript:alert(1)',label:'unsafe'},{url:'https://artifact.invalid/report',label:'Report'}]}});
+     return json({version:1,request_digest:'a'.repeat(64),request_id:identity.request_id,session_id:identity.session_id,mode:'task',job_id:'job-fixture',state:'completed',result:{text:'<img src=x onerror="window.pwned=1">',artifacts:[{url:'javascript:alert(1)',label:'unsafe'},{url:'https://artifact.invalid/report',label:'Report'}]}});
     }
     if(u.pathname==='/api/dot/off'){available=false;return json({enabled:false});}
     if(u.pathname.startsWith('/api/'))return json({});
@@ -55,7 +55,7 @@ for (const engine of process.env.BROWSER ? [process.env.BROWSER] : ['chromium','
    assert.equal(await page.locator('#dot-result img').count(),0);assert.equal(await page.locator('#dot-result a').count(),1);
    assert.equal(posts.length,1);assert.ok(gets.some(p=>p.endsWith(posts[0].request_id)));
    await page.locator('#dot-history button').last().focus(); await page.keyboard.press('Enter');
-   await page.waitForFunction(()=>document.querySelector('#dot-notice').textContent.length>0); assert.equal(cancelled,1);
+   await page.waitForFunction(()=>document.querySelector('#dot-notice').textContent===t('Cancellation is intent only; refresh to inspect completion')); assert.equal(cancelled,1);
    assert.equal(await page.evaluate(()=>window.pwned),undefined);
    assert.equal(await page.evaluate(()=>scrollY),before);
    assert.ok(await page.locator('#view-dot').evaluate(n=>n.scrollWidth<=n.clientWidth+1));

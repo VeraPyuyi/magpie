@@ -9,5 +9,9 @@
   const dictionaries = Object.fromEntries(Object.entries(words).map(([lang, values]) => [lang, Object.fromEntries(keys.map((key, i) => [key.includes("_") || /^[a-z]+$/.test(key) ? "Dot state: " + key : key, values[i]]).filter(([key]) => key !== "Dot background tasks"))]));
   const cancel = {zh:"请求取消", "zh-TW":"請求取消", ja:"キャンセルを要求", de:"Abbruch anfordern"};
   for (const lang of Object.keys(dictionaries)) dictionaries[lang]["Request cancellation"] = cancel[lang];
+  const acceptance = {zh:"本机接受记录", "zh-TW":"本機接受記錄", ja:"ローカル受付記録", de:"Lokaler Annahmeeintrag"};
+  for (const lang of Object.keys(dictionaries)) dictionaries[lang]["Local acceptance record"] = acceptance[lang];
+  const capacity = {zh:"Dot 容量：已保留 {retained} / {limit}；剩余 {remaining}。验证任务也计入容量。", "zh-TW":"Dot 容量：已保留 {retained} / {limit}；剩餘 {remaining}。驗證工作也計入容量。", ja:"Dot 容量：{limit} 件中 {retained} 件を保持、残り {remaining} 件。検証タスクも含みます。", de:"Dot Kapazität: {retained} von {limit} gespeichert; {remaining} frei. Prüfaufgaben zählen ebenfalls."};
+  for (const lang of Object.keys(dictionaries)) dictionaries[lang]["Dot capacity: {retained} retained of {limit}; {remaining} remaining. Probes also count."] = capacity[lang];
   magpie.strings(dictionaries);
 })();
