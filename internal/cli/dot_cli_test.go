@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -82,9 +81,8 @@ func TestDotCLITaskGateAndRecovery(t *testing.T) {
 	if err := dotbridge.SaveConfig(dotbridge.Config{Enabled: true, Address: strings.TrimPrefix(srv.URL, "http://"), Credential: "cli"}); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(t.TempDir(), "task.json")
-	b, _ := json.Marshal(sub)
-	os.WriteFile(path, b, 0600)
+	path := dotTempFile(t, "task.json")
+	dotWriteFile(t, path, []byte(`{"request_id":"cli-request-1","mode":"task","task":"Summarize the supplied context","session_id":"","messages":[]}`))
 	dotTestPrivate(t, path)
 	var out bytes.Buffer
 	err := dotTo(context.Background(), &out, []string{"submit", "--file", path})
@@ -119,8 +117,8 @@ func TestDotCLITaskGateAndRecovery(t *testing.T) {
 func TestDotCLIPairRejectsBeforeVault(t *testing.T) {
 	store := dotSandbox(t)
 	for i, body := range []string{`{"version":2}`, `{"version":1,"token":"do-not-print","listen":"https://127.0.0.1:1234"}`, strings.Repeat("x", 16385)} {
-		p := filepath.Join(t.TempDir(), fmt.Sprintf("pair-%d.json", i))
-		os.WriteFile(p, []byte(body), 0600)
+		p := dotTempFile(t, fmt.Sprintf("pair-%d.json", i))
+		dotWriteFile(t, p, []byte(body))
 		var out bytes.Buffer
 		err := dotTo(context.Background(), &out, []string{"pair", p})
 		if err == nil || store.writes != 0 || strings.Contains(out.String(), "do-not-print") || strings.Contains(err.Error(), "do-not-print") {

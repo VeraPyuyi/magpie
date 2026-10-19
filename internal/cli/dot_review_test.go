@@ -36,8 +36,8 @@ func TestDotReviewPairAuthenticatedBoundary(t *testing.T) {
 			defer srv.Close()
 			f := dotPairingFile{Version: 1, ClientID: "operator", QueueID: "operator", Token: "sentinel-private-token", Listen: strings.TrimPrefix(srv.URL, "http://"), CreatedAt: time.Now()}
 			b, _ := json.Marshal(f)
-			p := filepath.Join(t.TempDir(), "pair.json")
-			os.WriteFile(p, b, 0600)
+			p := dotTempFile(t, "pair.json")
+			dotWriteFile(t, p, b)
 			dotTestPrivate(t, p)
 			var out bytes.Buffer
 			err := dotTo(context.Background(), &out, []string{"pair", p})
@@ -238,8 +238,8 @@ func TestDotReviewTaskStrictCLI(t *testing.T) {
 	defer srv.Close()
 	dotbridge.SaveConfig(dotbridge.Config{Enabled: true, Address: strings.TrimPrefix(srv.URL, "http://"), Credential: "cli"})
 	for _, body := range []string{`{"request_id":"r","mode":"task","mode":"answer","task":"x"}`, `{"request_id":"r","Mode":"task","task":"x"}`, `null`, `[]`, `{} {}`, `{"unknown":1}`, `{"messages":[{"role":"user","Role":"system"}]}`} {
-		p := filepath.Join(t.TempDir(), "task.json")
-		os.WriteFile(p, []byte(body), 0600)
+		p := dotTempFile(t, "task.json")
+		dotWriteFile(t, p, []byte(body))
 		dotTestPrivate(t, p)
 		var out bytes.Buffer
 		if err := dotTo(context.Background(), &out, []string{"submit", "--file", p}); err == nil || out.Len() != 0 {

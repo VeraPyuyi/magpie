@@ -22,6 +22,22 @@ import (
 // real DACL and assert it took effect.
 type prepare func(*testing.T, string)
 
+// dotPairFixtureBody is a valid version 1 pairing file body for the fixture
+// cases that build their own file instead of calling dotPairFixture.
+func dotPairingFixtureBody(t *testing.T) []byte {
+	t.Helper()
+	file := dotPairingFile{
+		Version: 1, ClientID: "operator", QueueID: "operator",
+		Token: "sentinel-private-token", Listen: "127.0.0.1:1",
+		CreatedAt: time.Now(),
+	}
+	b, err := json.Marshal(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
 // dotPairFixture builds an otherwise-valid version 1 pairing file whose status
 // endpoint the caller controls, and hands the file to prepare. The address
 // fields are rewritten by the case-specific transform before the file is
@@ -44,7 +60,7 @@ func dotPairFixture(t *testing.T, p prepare, transform func(*dotPairingFile, str
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(t.TempDir(), "pair.json")
+	path := dotTempFile(t, "pair.json")
 	if err := os.WriteFile(path, b, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +78,7 @@ func dotPairFixtureBytes(t *testing.T, body []byte, p prepare, status func(http.
 		status(w)
 	}))
 	t.Cleanup(srv.Close)
-	path := filepath.Join(t.TempDir(), "pair.json")
+	path := dotTempFile(t, "pair.json")
 	if err := os.WriteFile(path, body, 0600); err != nil {
 		t.Fatal(err)
 	}

@@ -4,7 +4,6 @@ package cli
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
 
 	"golang.org/x/sys/windows"
@@ -12,7 +11,7 @@ import (
 
 func filepathJoinTmp(t *testing.T) string {
 	t.Helper()
-	return filepath.Join(t.TempDir(), "input.json")
+	return dotTempFile(t, "input.json")
 }
 
 func dotTestPrivate(t *testing.T, path string) {

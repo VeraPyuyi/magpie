@@ -3,33 +3,31 @@
 package cli
 
 import (
-	"bytes"
-	"context"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
-// This is the R1 blocker's control: a fixture that keeps the 0600 mode
-// os.WriteFile just gave it takes the success path, so a case that expects
-// rejection fails on its own assertion. The paired assertion below shows the
-// same fixture with a real chmod to 0644 is rejected with no vault write.
+// This is the R1 blocker's control: two fixtures in the same resolved temp
+// root, identical except for their permission bits. The 0600 one imports and
+// writes once; the 0644 one is rejected with no vault write. So the outcome
+// comes from the mode the fixture was given, not from the predicate.
 func TestDotFixtureModeDecidesTheOutcome(t *testing.T) {
+	root := dotTempDir(t)
 	left0600 := dotSandbox(t)
-	leftPath := dotPairFixture(t, nil, nil, dotStatusPaired)
-	var leftOut bytes.Buffer
-	if err := dotTo(context.Background(), &leftOut, []string{"pair", leftPath}); err != nil {
-		t.Fatalf("0600 fixture rejected: %v", err)
-	}
+	leftPath := filepath.Join(root, "mode-left.json")
+	dotWriteFile(t, leftPath, dotPairingFixtureBody(t))
+	dotChmod(t, leftPath, 0600)
+	dotPairAccepted(t, dotPreparePrivate)
 	if left0600.writes != 1 {
 		t.Fatal("the 0600 fixture did not import", left0600.writes)
 	}
 
 	right0644 := dotSandbox(t)
-	rightPath := dotPairFixture(t, dotPrepareNonPrivate(0644), nil, dotStatusPaired)
-	var rightOut bytes.Buffer
-	if err := dotTo(context.Background(), &rightOut, []string{"pair", rightPath}); err == nil {
-		t.Fatal("a 0644 fixture was accepted")
-	}
+	rightPath := filepath.Join(root, "mode-right.json")
+	dotWriteFile(t, rightPath, dotPairingFixtureBody(t))
+	dotChmod(t, rightPath, 0644)
+	dotPairRejected(t, "0644", 0, nil, nil, dotPrepareNonPrivate(0644))
 	if right0644.writes != 0 {
 		t.Fatal("the 0644 fixture wrote to the vault", right0644.writes)
 	}

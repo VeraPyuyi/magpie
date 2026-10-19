@@ -64,7 +64,74 @@ session's `internal/gateway` and `internal/dotbridge` working changes were left
 alone. Full repository suite, GUI suite, live DotControl pairing and the task
 probe remain unrun.
 
-## Scope delivered
+## Fixture review (F1, F2) scoped fix
+
+Scope: tests and this report only. No production code changed.
+
+**F1 — the Unix hardlink case asserted rejection at the wrong layer.**
+`TestDotOpenInputUnixRefusesLinks` called `dotOpenInput` after `os.Link` and
+failed if the open succeeded. Unix `dotOpenInput` only traverses with
+`Openat`/`O_NOFOLLOW`; a hard link is an ordinary directory entry, so the
+traversal legitimately opens it and the test would deterministically reach its
+`t.Fatal`. The link-count rule lives in `dotCheckFile`, which `dotRead` calls
+on the descriptor it holds. The case now:
+
+- opens a regular private file through the traversal (still this layer's rule);
+- refuses a symlinked ancestor through the traversal;
+- refuses a hard-linked leaf through `dotRead`, and refuses the second name of
+  the same inode;
+- refuses a link created *after* the open, asserting `dotCheckFile` on the held
+  descriptor, which is what makes the handle binding meaningful.
+
+Production separation is unchanged: traversal refuses links, `dotCheckFile`
+judges the held descriptor.
+
+**F2 — valid fixtures used unresolved temporary-directory ancestors.**
+macOS puts `t.TempDir()` under `/var`, a symlink to `/private/var`, and a
+symlinked `TMPDIR` does the same on Linux. The production traversal refuses
+every symlink component from `/`, so a valid private fixture built from an
+unresolved temp path would be rejected for the wrong reason. A new shared
+helper, `internal/cli/dot_fixture_root_test.go`, resolves the temp root once
+with `filepath.EvalSymlinks` (`dotTempDir`) and joins filenames onto it
+(`dotTempFile`, `dotWriteFile`, `dotChmod` with mode read-back). Every valid
+fixture path now goes through it: the pairing fixture, the bytes fixture, the
+authenticated-boundary fixture, the task fixtures, the mode control, the Unix
+traversal and ownership cases, and the Windows access cases. Production is
+untouched: it still refuses every link, including the intentional leaf and
+ancestor symlink cases, which remain and are asserted for rejection.
+
+Verification, Windows 10 host, this revision:
+
+1. `go test -tags nogui ./internal/cli -run '^TestDot' -count=1` — ok (3.068s).
+2. `CGO_ENABLED=1 CC=C:/msys64/mingw64/bin/gcc.exe go test -race -tags nogui
+   ./internal/cli -run '^TestDot' -count=1` — ok (4.465s), and
+   `-count=20` — ok (20.055s).
+3. Windows `go vet -tags nogui ./internal/cli` — ok.
+4. `GOOS=linux` and `GOOS=darwin` cross-compiled `go vet -tags nogui
+   ./internal/cli` — exit 0 for both.
+5. `gofmt -l` on the changed files prints nothing.
+
+Observed Windows behavior versus source-derived reasoning: every result above
+was executed on Windows. F1's original assertion is a source-derived control-flow
+finding, not something I ran on Unix — the Windows `dotOpenInput` opens through
+held directory handles with `NtCreateFile`, so the Unix traversal's behavior on
+a hard link was not exercised here. Likewise F2's `/var` failure was derived
+from the macOS `TMPDIR` layout, not observed. What I did observe on Windows:
+after the change, the Windows hard-link case (which asserts `dotRead` and the
+held handle) rejects as before, and the resolved-root helper returns the same
+path on Windows, where `t.TempDir()` has no symlink component.
+
+Cross-platform execution limits, unchanged and restated: no Linux or macOS
+runtime exists on this machine — no WSL distro installed, no Docker, no Linux
+Go toolchain. The Linux and Darwin runs are cross-compiled vet only, proving
+the `!windows` files compile there, not that the Unix fixtures pass. No Unix
+runtime result is claimed and none was forged. The `!windows` tag is broader
+than Unix, so no all-GOOS claim is made. The Windows race results do not
+execute the `!windows` fixtures.
+
+The other session's `internal/gateway`, `internal/gui` and `plugins/dot`
+working changes were left untouched, and were not committed. Full repository
+suite, GUI suite, live DotControl pairing and the task probe remain unrun.
 
 - `internal/cli/dot_cli.go` plus tests and small pairing-file helpers
 - minimal dispatcher wiring in `internal/cli/main.go` and `help_cli.go`

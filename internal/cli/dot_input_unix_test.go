@@ -19,19 +19,7 @@ func dotTestPrivate(t *testing.T, path string) {
 	dotChmod(t, path, 0600)
 }
 
-func dotChmod(t *testing.T, path string, mode os.FileMode) {
-	t.Helper()
-	if err := os.Chmod(path, mode); err != nil {
-		t.Fatal(err)
-	}
-	st, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := st.Mode().Perm(); got != mode {
-		t.Fatalf("mode is %#o, want %#o", got, mode)
-	}
-}
+// dotChmod lives in dot_fixture_root_test.go for every platform.
 
 func dotRename(t *testing.T, from, to string) {
 	t.Helper()
@@ -87,17 +75,17 @@ func TestDotPairInputUnixLinks(t *testing.T) {
 }
 
 // The open traversal itself refuses links: it never follows an ancestor
-// symlink to reach the file, so no file mode is consulted.
+// symlink to reach the file. The leaf's link count is not this layer's rule,
+// so the hardlink case below goes through dotRead, which is where the count is
+// checked on the open descriptor.
 func TestDotOpenInputUnixRefusesLinks(t *testing.T) {
-	dir := t.TempDir()
+	dir := dotTempDir(t)
 	real := filepath.Join(dir, "real")
 	if err := os.Mkdir(real, 0700); err != nil {
 		t.Fatal(err)
 	}
 	leaf := filepath.Join(real, "pair.json")
-	if err := os.WriteFile(leaf, []byte(`{}`), 0600); err != nil {
-		t.Fatal(err)
-	}
+	dotWriteFile(t, leaf, []byte(`{}`))
 	if _, closeInput, err := dotOpenInput(leaf); err != nil {
 		t.Fatalf("regular private file: %v", err)
 	} else {
@@ -109,23 +97,42 @@ func TestDotOpenInputUnixRefusesLinks(t *testing.T) {
 		closeInput()
 		t.Fatal("traversal through a symlinked ancestor was accepted")
 	}
+	// A hard link is an ordinary directory entry, so the traversal opens it;
+	// dotRead is the layer that refuses it, on the descriptor it holds.
 	leafLink := leaf + ".link"
 	if err := os.Link(leaf, leafLink); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Remove(leafLink) })
-	if _, closeInput, err := dotOpenInput(leaf); err == nil {
-		closeInput()
-		t.Fatal("hard-linked leaf was accepted")
+	if _, err := dotRead(leaf, true, 16384); err == nil {
+		t.Fatal("hard-linked leaf accepted by dotRead")
 	}
+	if _, err := dotRead(leafLink, true, 16384); err == nil {
+		t.Fatal("the second name of a hard-linked leaf was accepted")
+	}
+	// The held descriptor is what dotCheckFile judges, so a link added after
+	// the open is still refused.
+	later := filepath.Join(real, "later.json")
+	dotWriteFile(t, later, []byte(`{}`))
+	f, closeInput, err := dotOpenInput(later)
+	if err != nil {
+		t.Fatal(err)
+	}
+	laterLink := later + ".link"
+	if err := os.Link(later, laterLink); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Remove(laterLink) })
+	if err := dotCheckFile(f, nil, true); err == nil {
+		t.Fatal("a link added after the open was accepted")
+	}
+	closeInput()
 }
 
 // Ownership is checked against the effective user on the open descriptor.
 func TestDotCheckFileUnixOwnership(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "pair.json")
-	if err := os.WriteFile(p, []byte(`{}`), 0600); err != nil {
-		t.Fatal(err)
-	}
+	p := dotTempFile(t, "pair.json")
+	dotWriteFile(t, p, []byte(`{}`))
 	f, closeInput, err := dotOpenInput(p)
 	if err != nil {
 		t.Fatal(err)
