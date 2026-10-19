@@ -24,10 +24,11 @@ const (
 
 // Connection talks to the local Dot bridge API.
 type Connection struct {
-	baseURL string
-	pairingIdentity string
-	token   func() (string, error)
-	client  *http.Client
+	baseURL           string
+	pairingIdentity   string
+	readinessRevision string
+	token             func() (string, error)
+	client            *http.Client
 }
 
 // NewConnection validates a numeric loopback address and builds a client.
@@ -277,6 +278,10 @@ func (c *Connection) Enqueue(ctx context.Context, sub Submission, scope string, 
 	if snap := attempt.Snapshot(); snap.Digest != "" && (snap.Digest != digest || snap.RequestID != sub.RequestID) {
 		return Job{}, errDigestConflict
 	}
+	// Reject a switched connection or foreign scope before any durable reserve.
+	if err := c.checkPairingScope(scope); err != nil {
+		return Job{}, err
+	}
 	snapshot, existing, err := Reserve(sub, scope)
 	if err != nil {
 		return Job{}, err
@@ -302,6 +307,9 @@ func (c *Connection) Enqueue(ctx context.Context, sub Submission, scope string, 
 
 // Resume reloads journal identity and looks up without POST.
 func (c *Connection) Resume(ctx context.Context, scope, requestID string) (Job, *Attempt, error) {
+	if err := c.checkPairingScope(scope); err != nil {
+		return Job{}, nil, err
+	}
 	snapshot, err := lookupRequest(scope, requestID)
 	if err != nil {
 		return Job{}, nil, err
@@ -316,6 +324,23 @@ func (c *Connection) Resume(ctx context.Context, scope, requestID string) (Job, 
 	}
 	_ = SaveAttempt(scope, attempt.Snapshot())
 	return job, attempt, nil
+}
+
+// checkPairingScope keeps all bound clients on their captured namespace.
+// Legacy/unbound transport fixtures retain arbitrary scopes; production clients
+// are always constructed by BoundPairingSnapshot/PairedConnection.
+func (c *Connection) checkPairingScope(scope string) error {
+	if c.pairingIdentity == "" {
+		return nil
+	}
+	if scope != "cli:"+c.pairingIdentity && scope != "gui:"+c.pairingIdentity && !strings.HasPrefix(scope, c.pairingIdentity+":") {
+		return errNotPaired
+	}
+	cfg, err := LoadConfig()
+	if err != nil || !cfg.Enabled || PairingIdentity(cfg) != c.pairingIdentity {
+		return errNotPaired
+	}
+	return nil
 }
 
 // Status fetches bridge readiness from the local API.
@@ -345,8 +370,9 @@ func (c *Connection) Status(ctx context.Context) (Status, error) {
 	}
 	cfg, cfgErr := LoadConfig()
 	readyCache.Lock()
-	if c.pairingIdentity != "" && cfgErr == nil && cfg.Enabled && PairingIdentity(cfg) == c.pairingIdentity && readyCache.generation == generation {
+	if c.pairingIdentity != "" && cfgErr == nil && cfg.Enabled && PairingIdentity(cfg) == c.pairingIdentity && cfg.ReadinessRevision == c.readinessRevision && readyCache.generation == generation {
 		readyCache.identity = c.pairingIdentity
+		readyCache.revision = c.readinessRevision
 		readyCache.status = st
 		readyCache.at = time.Now()
 	}
@@ -358,6 +384,7 @@ func (c *Connection) Status(ctx context.Context) (Status, error) {
 var readyCache struct {
 	sync.Mutex
 	identity   string
+	revision   string
 	status     Status
 	at         time.Time
 	generation uint64
@@ -374,11 +401,15 @@ func invalidateReady() {
 
 func CachedReady(now time.Time) bool {
 	cfg, err := LoadConfig()
-	if err != nil || !cfg.Enabled { return false }
+	if err != nil || !cfg.Enabled {
+		return false
+	}
 	identity := PairingIdentity(cfg)
 	readyCache.Lock()
 	defer readyCache.Unlock()
-	if identity == "" || identity != readyCache.identity { return false }
+	if identity == "" || identity != readyCache.identity || cfg.ReadinessRevision != readyCache.revision {
+		return false
+	}
 	s := readyCache.status
 	age := now.Sub(readyCache.at)
 	// "active" is a conservative provisional spelling until Task 2 pins the

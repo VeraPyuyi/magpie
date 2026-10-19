@@ -59,7 +59,9 @@ func dotScope(r *http.Request) string {
 	identity, _ := r.Context().Value(dotPairingKey{}).(string)
 	if identity == "" {
 		cfg, err := dotbridge.LoadConfig()
-		if err == nil { identity = dotbridge.PairingIdentity(cfg) }
+		if err == nil {
+			identity = dotbridge.PairingIdentity(cfg)
+		}
 	}
 	return identity + ":" + dotHashParts(key, callerOf(r).agent)
 }
@@ -87,9 +89,13 @@ func dotSessionID(r *http.Request, requestID string) string {
 // attempt runs. Neither headers nor a vendor response can set its replay state.
 func prepareDot(r *http.Request, from provider.Protocol, body []byte) (*http.Request, error) {
 	cfg, err := dotbridge.LoadConfig()
-	if err != nil { return r, err }
+	if err != nil {
+		return r, err
+	}
 	identity := dotbridge.PairingIdentity(cfg)
-	if !cfg.Enabled || identity == "" { return r, fmt.Errorf("dot pairing unavailable") }
+	if !cfg.Enabled || identity == "" {
+		return r, fmt.Errorf("dot pairing unavailable")
+	}
 	r = r.WithContext(context.WithValue(r.Context(), dotPairingKey{}, identity))
 	id, err := dotRequestID(r)
 	if err != nil {
@@ -98,6 +104,40 @@ func prepareDot(r *http.Request, from provider.Protocol, body []byte) (*http.Req
 	sub, err := dotSubmission(from, body, id, dotSessionID(r, id))
 	if err != nil {
 		return r, err
+	}
+	// Legacy stable headers were hashed without pairing identity. Check their
+	// exact old wire identity BEFORE creating any new reservation. The old scope
+	// does not prove which queue owns it, so require explicit manual recovery.
+	if header := r.Header.Get(dotRequestHeader); header != "" {
+		key := access.Caller(r.Context()).KeyID
+		if key == "" {
+			key = "local"
+		}
+		oldScope := dotHashParts(key, callerOf(r).agent)
+		oldID := "req-" + dotHashParts(oldScope, header)
+		snap, found, err := dotbridge.LegacyRequest(oldScope, oldID)
+		if err != nil {
+			return r, err
+		}
+		if found {
+			oldSession := "sess-" + dotHashParts(oldScope, oldID)
+			if session := sessionOf(r.Header); session != "" {
+				oldSession = "sess-" + dotHashParts(oldScope, session)
+			}
+			legacySub, err := dotSubmission(from, body, oldID, oldSession)
+			if err != nil {
+				return r, err
+			}
+			digest, err := dotbridge.Digest(legacySub)
+			if err != nil {
+				return r, err
+			}
+			reason := "legacy_request_manual_recovery_required"
+			if digest != snap.Digest {
+				reason = "legacy_request_digest_conflict"
+			}
+			return r, fmt.Errorf("%s: original_scope=%s original_request_id=%s; inspect magpie dot archives; no POST sent; automatic_redispatch:false", reason, oldScope, oldID)
+		}
 	}
 	a, err := dotbridge.NewAttempt(sub)
 	if err != nil {
@@ -113,11 +153,10 @@ func (s *Server) serveDot(w http.ResponseWriter, r *http.Request, from provider.
 	if a == nil || !ok {
 		return writeError(w, from, 500, "dot attempt not bound"), "dot attempt not bound"
 	}
-	conn, err := dotbridge.PairedConnection()
+	cfg, conn, err := dotbridge.BoundPairingSnapshot()
 	if err != nil {
 		return writeError(w, from, 503, "dot bridge unavailable"), "dot bridge unavailable"
 	}
-	cfg, err := dotbridge.LoadConfig()
 	identity, _ := r.Context().Value(dotPairingKey{}).(string)
 	if err != nil || identity == "" || identity != conn.PairingIdentity() || identity != dotbridge.PairingIdentity(cfg) {
 		return writeError(w, from, 503, "dot bridge configuration unavailable"), "dot bridge configuration unavailable"

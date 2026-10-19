@@ -200,6 +200,48 @@ func Requests(scope string) ([]Snapshot, error) {
 	return out, nil
 }
 
+// ArchivedRequest names the original namespace explicitly. Archive entries are
+// local recovery evidence, never authorization to query the current queue.
+type ArchivedRequest struct {
+	Scope string `json:"scope"`
+	Snapshot
+}
+
+// RequestArchive lists retained records including legacy and previous pairings.
+// It performs no remote I/O and never reassigns a record to the current pairing.
+func RequestArchive() ([]ArchivedRequest, error) {
+	unlock, held := filelock.Lock(journalLockPath(), filelock.Wait)
+	if !held {
+		return nil, errJournal
+	}
+	defer unlock()
+	file, err := readJournal()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ArchivedRequest, 0, len(file.Records))
+	for _, rec := range file.Records {
+		out = append(out, ArchivedRequest{rec.Scope, recordToSnapshot(rec)})
+	}
+	return out, nil
+}
+
+// LegacyRequest checks a pre-generation gateway scope and exact old wire ID.
+// A found record must block new reservations even after pairing replacement.
+// Returning its snapshot does not authorize remote recovery on the current pair.
+func LegacyRequest(scope, requestID string) (Snapshot, bool, error) {
+	items, err := Requests(scope)
+	if err != nil {
+		return Snapshot{}, false, err
+	}
+	for _, snap := range items {
+		if snap.RequestID == requestID {
+			return snap, true, nil
+		}
+	}
+	return Snapshot{}, false, nil
+}
+
 // lookupRequest finds one journal record.
 func lookupRequest(scope, requestID string) (Snapshot, error) {
 	unlock, held := filelock.Lock(journalLockPath(), filelock.Wait)

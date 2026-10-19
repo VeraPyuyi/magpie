@@ -19,6 +19,7 @@ const dotUsage = `magpie dot pair <pairing-file>   import DotControl's private v
 magpie dot status                show authenticated bridge readiness and capabilities
 magpie dot off                   disable locally (keeps pairing and pending jobs)
 magpie dot submit --file task.json   enqueue a task once, only with verified task capability
+magpie dot archives              list original scopes/wire IDs for manual recovery (local only)
 magpie dot requests              list this CLI's local request journal
 magpie dot request <requestID>   recover a journaled request with GET, without resubmission
 magpie dot job <id>              fetch job state and results
@@ -95,6 +96,13 @@ func dotTo(ctx context.Context, out io.Writer, args []string) error {
 		}
 		return dotPair(ctx, out, args[1])
 	}
+	if len(args) == 1 && args[0] == "archives" {
+		items, err := dotbridge.RequestArchive()
+		if err != nil {
+			return fmt.Errorf("dot: cannot read recovery archive")
+		}
+		return json.NewEncoder(out).Encode(items)
+	}
 	cfg, err := dotbridge.LoadConfig()
 	if err != nil {
 		return fmt.Errorf("dot: cannot load configuration")
@@ -126,10 +134,11 @@ func dotTo(ctx context.Context, out io.Writer, args []string) error {
 	if len(args) == 2 && !dotID.MatchString(args[1]) {
 		return fmt.Errorf("dot: invalid identifier")
 	}
-	c, err := dotbridge.PairedConnection()
-	if err != nil {
-		return fmt.Errorf("dot: paired connection unavailable; inspect configuration and OS keyring")
+	boundConfig, c, err := dotbridge.BoundPairingSnapshot()
+	if err != nil || dotbridge.PairingIdentity(boundConfig) != dotbridge.PairingIdentity(cfg) {
+		return fmt.Errorf("dot: pairing changed or unavailable; inspect configuration and OS keyring")
 	}
+	scope = "cli:" + c.PairingIdentity()
 	switch args[0] {
 	case "status":
 		st, err := c.Status(ctx)
