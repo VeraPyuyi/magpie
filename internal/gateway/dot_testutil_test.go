@@ -78,8 +78,7 @@ func enableDotBridgeForGateway(t *testing.T, jobs ...http.Handler) *httptest.Ser
 	if err := dotbridge.SavePairing(cfg, "paired-token"); err != nil {
 		t.Fatal(err)
 	}
-	host := strings.TrimPrefix(srv.URL, "http://")
-	conn, err := dotbridge.NewConnection(host, func() (string, error) { return "paired-token", nil })
+	conn, err := dotbridge.PairedConnection()
 	if err != nil {
 		t.Fatal(err)
 	}

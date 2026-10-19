@@ -82,7 +82,7 @@ func dotRead(path string, private bool, max int64) ([]byte, error) {
 	}
 	return b, nil
 }
-func dotScope(cfg dotbridge.Config) string { return "cli:" + cfg.Address + ":" + cfg.Credential }
+func dotScope(cfg dotbridge.Config) string { return "cli:" + dotbridge.PairingIdentity(cfg) }
 
 func dotTo(ctx context.Context, out io.Writer, args []string) error {
 	if len(args) == 0 {

@@ -25,6 +25,7 @@ const (
 // Connection talks to the local Dot bridge API.
 type Connection struct {
 	baseURL string
+	pairingIdentity string
 	token   func() (string, error)
 	client  *http.Client
 }
@@ -81,9 +82,9 @@ func parseLoopbackAddress(address string) (string, error) {
 		return "", errAddress
 	}
 	if ip.Is6() {
-		return fmt.Sprintf("http://[%s]:%s", ip.String(), port), nil
+		return fmt.Sprintf("http://[%s]:%d", ip.String(), n), nil
 	}
-	return fmt.Sprintf("http://%s:%s", ip.String(), port), nil
+	return fmt.Sprintf("http://%s:%d", ip.String(), n), nil
 }
 
 func (c *Connection) authHeader() (string, error) {
@@ -319,12 +320,15 @@ func (c *Connection) Resume(ctx context.Context, scope, requestID string) (Job, 
 
 // Status fetches bridge readiness from the local API.
 func (c *Connection) Status(ctx context.Context) (Status, error) {
-	readyCache.Lock()
-	readyCache.status = Status{}
-	readyCache.at = time.Time{}
-	readyCache.generation++
-	generation := readyCache.generation
-	readyCache.Unlock()
+	var generation uint64
+	if c.pairingIdentity != "" {
+		readyCache.Lock()
+		readyCache.status = Status{}
+		readyCache.at = time.Time{}
+		readyCache.generation++
+		generation = readyCache.generation
+		readyCache.Unlock()
+	}
 	resp, body, err := c.do(ctx, http.MethodGet, "/dot-bridge/v1/status", nil)
 	if err != nil {
 		return Status{}, err
@@ -339,8 +343,10 @@ func (c *Connection) Status(ctx context.Context) (Status, error) {
 	if st.Version != 1 {
 		return Status{}, errReceipt
 	}
+	cfg, cfgErr := LoadConfig()
 	readyCache.Lock()
-	if readyCache.generation == generation {
+	if c.pairingIdentity != "" && cfgErr == nil && cfg.Enabled && PairingIdentity(cfg) == c.pairingIdentity && readyCache.generation == generation {
+		readyCache.identity = c.pairingIdentity
 		readyCache.status = st
 		readyCache.at = time.Now()
 	}
@@ -351,14 +357,28 @@ func (c *Connection) Status(ctx context.Context) (Status, error) {
 // CachedReady reports whether a recently validated status cache is ready.
 var readyCache struct {
 	sync.Mutex
+	identity   string
 	status     Status
 	at         time.Time
 	generation uint64
 }
 
-func CachedReady(now time.Time) bool {
+func invalidateReady() {
 	readyCache.Lock()
 	defer readyCache.Unlock()
+	readyCache.identity = ""
+	readyCache.status = Status{}
+	readyCache.at = time.Time{}
+	readyCache.generation++
+}
+
+func CachedReady(now time.Time) bool {
+	cfg, err := LoadConfig()
+	if err != nil || !cfg.Enabled { return false }
+	identity := PairingIdentity(cfg)
+	readyCache.Lock()
+	defer readyCache.Unlock()
+	if identity == "" || identity != readyCache.identity { return false }
 	s := readyCache.status
 	age := now.Sub(readyCache.at)
 	// "active" is a conservative provisional spelling until Task 2 pins the

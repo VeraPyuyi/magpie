@@ -34,6 +34,7 @@ var (
 
 type dotAttemptKey struct{}
 type dotSubmissionKey struct{}
+type dotPairingKey struct{}
 
 func withDotAttempt(ctx context.Context, attempt *dotbridge.Attempt) context.Context {
 	return context.WithValue(ctx, dotAttemptKey{}, attempt)
@@ -55,7 +56,12 @@ func dotScope(r *http.Request) string {
 	if key == "" {
 		key = "local"
 	}
-	return dotHashParts(key, callerOf(r).agent)
+	identity, _ := r.Context().Value(dotPairingKey{}).(string)
+	if identity == "" {
+		cfg, err := dotbridge.LoadConfig()
+		if err == nil { identity = dotbridge.PairingIdentity(cfg) }
+	}
+	return identity + ":" + dotHashParts(key, callerOf(r).agent)
 }
 func dotRequestID(r *http.Request) (string, error) {
 	if id := r.Header.Get(dotRequestHeader); id != "" {
@@ -80,6 +86,11 @@ func dotSessionID(r *http.Request, requestID string) string {
 // prepareDot binds immutable identity and the exact client-owned Attempt before
 // attempt runs. Neither headers nor a vendor response can set its replay state.
 func prepareDot(r *http.Request, from provider.Protocol, body []byte) (*http.Request, error) {
+	cfg, err := dotbridge.LoadConfig()
+	if err != nil { return r, err }
+	identity := dotbridge.PairingIdentity(cfg)
+	if !cfg.Enabled || identity == "" { return r, fmt.Errorf("dot pairing unavailable") }
+	r = r.WithContext(context.WithValue(r.Context(), dotPairingKey{}, identity))
 	id, err := dotRequestID(r)
 	if err != nil {
 		return r, err
@@ -107,7 +118,8 @@ func (s *Server) serveDot(w http.ResponseWriter, r *http.Request, from provider.
 		return writeError(w, from, 503, "dot bridge unavailable"), "dot bridge unavailable"
 	}
 	cfg, err := dotbridge.LoadConfig()
-	if err != nil {
+	identity, _ := r.Context().Value(dotPairingKey{}).(string)
+	if err != nil || identity == "" || identity != conn.PairingIdentity() || identity != dotbridge.PairingIdentity(cfg) {
 		return writeError(w, from, 503, "dot bridge configuration unavailable"), "dot bridge configuration unavailable"
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(cfg.AnswerWaitSeconds)*time.Second)

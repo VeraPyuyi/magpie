@@ -201,6 +201,8 @@ func TestDotReviewJournalAndCancelIdentity(t *testing.T) {
 			if err := dotbridge.SaveConfig(cfg); err != nil {
 				t.Fatal(err)
 			}
+			cfg, err := dotbridge.LoadConfig()
+			if err != nil { t.Fatal(err) }
 			snap, _, err := dotbridge.Reserve(sub, dotScope(cfg))
 			if err != nil {
 				t.Fatal(err)

@@ -2,6 +2,9 @@ package dotbridge
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +13,7 @@ import (
 	"time"
 
 	"github.com/yetone/magpie/internal/edit"
+	"github.com/yetone/magpie/internal/filelock"
 	"github.com/yetone/magpie/internal/settings"
 )
 
@@ -25,6 +29,7 @@ type Config struct {
 	Enabled           bool   `json:"enabled"`
 	Address           string `json:"address"`
 	Credential        string `json:"credential"`
+	PairingGeneration string `json:"pairing_generation,omitempty"`
 	AnswerWaitSeconds int    `json:"answer_wait_seconds"`
 }
 
@@ -56,6 +61,22 @@ func validateConfig(cfg Config) error {
 
 // LoadConfig reads dot-bridge.json; a missing file is a disabled default.
 func LoadConfig() (Config, error) {
+	unlock, held := filelock.Lock(configPath()+".lock", filelock.Wait)
+	if !held { return Config{}, errInvalidConfig }
+	defer unlock()
+	cfg, err := readConfig()
+	if err != nil { return cfg, err }
+	// Migrate legacy configurations once under the same cross-process lock as
+	// writers. Never derive a public identifier from a secret or trust old proof.
+	if cfg.Credential != "" && cfg.PairingGeneration == "" {
+		cfg.PairingGeneration, err = newPairingGeneration()
+		if err != nil { return Config{}, err }
+		if err := writeConfig(cfg); err != nil { return Config{}, err }
+	}
+	return cfg, nil
+}
+
+func readConfig() (Config, error) {
 	path := configPath()
 	b, err := edit.Read(path)
 	if err != nil {
@@ -77,10 +98,29 @@ func LoadConfig() (Config, error) {
 
 // SaveConfig atomically writes dot-bridge.json.
 func SaveConfig(cfg Config) error {
+	unlock, held := filelock.Lock(configPath()+".lock", filelock.Wait)
+	if !held { return errInvalidConfig }
+	defer unlock()
+	return saveConfig(cfg, false)
+}
+
+func saveConfig(cfg Config, replace bool) error {
 	cfg = normalizeConfig(cfg)
-	if err := validateConfig(cfg); err != nil {
-		return err
+	if err := validateConfig(cfg); err != nil { return err }
+	previous, err := readConfig()
+	if err != nil { return err }
+	if replace || cfg.PairingGeneration == "" && previous.PairingGeneration == "" || cfg.Enabled != previous.Enabled || cfg.Address != previous.Address || cfg.Credential != previous.Credential {
+		cfg.PairingGeneration, err = newPairingGeneration()
+		if err != nil { return err }
+	} else {
+		// A stale settings form cannot resurrect an older pairing generation.
+		cfg.PairingGeneration = previous.PairingGeneration
 	}
+	if PairingIdentity(cfg) != PairingIdentity(previous) || cfg.Enabled != previous.Enabled { invalidateReady() }
+	return writeConfig(cfg)
+}
+
+func writeConfig(cfg Config) error {
 	if err := os.MkdirAll(settings.Dir(), 0o700); err != nil {
 		return err
 	}
@@ -104,9 +144,14 @@ func PairedConnection() (*Connection, error) {
 	if _, err := loadPairToken(reference); err != nil {
 		return nil, err
 	}
-	return NewConnection(cfg.Address, func() (string, error) {
+	c, err := NewConnection(cfg.Address, func() (string, error) {
+		current, err := LoadConfig()
+		if err != nil || !current.Enabled || PairingIdentity(current) != PairingIdentity(cfg) { return "", errNotPaired }
 		return loadPairToken(reference)
 	})
+	if err != nil { return nil, err }
+	c.pairingIdentity = PairingIdentity(cfg)
+	return c, nil
 }
 
 // SavePairing stores the pairing token and enables the bridge configuration.
@@ -114,21 +159,50 @@ func SavePairing(cfg Config, token string) error {
 	if token == "" {
 		return errNotPaired
 	}
-	if err := savePairToken(cfg.Credential, token); err != nil {
-		return err
-	}
+	unlock, held := filelock.Lock(configPath()+".lock", filelock.Wait)
+	if !held { return errInvalidConfig }
+	defer unlock()
 	cfg.Enabled = true
-	return SaveConfig(cfg)
+	if err := validateConfig(normalizeConfig(cfg)); err != nil { return err }
+	// Persist the new generation before replacing a credential at the same ref.
+	// Readers can never authenticate the replacement with the old cached proof.
+	if err := saveConfig(cfg, true); err != nil { return err }
+	return savePairToken(cfg.Credential, token)
 }
 
 // ClearPairing removes stored credentials without enabling the bridge.
 func ClearPairing(cfg Config) error {
-	if err := deletePairToken(cfg.Credential); err != nil && !errors.Is(err, errNotPaired) {
-		return err
-	}
+	unlock, held := filelock.Lock(configPath()+".lock", filelock.Wait)
+	if !held { return errInvalidConfig }
+	defer unlock()
 	cfg.Enabled = false
-	return SaveConfig(cfg)
+	if err := saveConfig(cfg, true); err != nil { return err }
+	if err := deletePairToken(cfg.Credential); err != nil && !errors.Is(err, errNotPaired) { return err }
+	return nil
 }
+
+func newPairingGeneration() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil { return "", err }
+	return hex.EncodeToString(b[:]), nil
+}
+
+// PairingIdentity returns the public, stable namespace for a loaded pairing.
+// It includes canonical loopback address, credential reference and persisted
+// generation, never the token or a token hash. Empty means invalid/unmigrated;
+// callers must LoadConfig before deriving scopes. Enabled is deliberately not
+// included so disabled pairings' saved records remain inspectable.
+func PairingIdentity(cfg Config) string {
+	address, err := parseLoopbackAddress(cfg.Address)
+	if err != nil || cfg.Credential == "" || cfg.PairingGeneration == "" { return "" }
+	b, _ := json.Marshal([]string{address, cfg.Credential, cfg.PairingGeneration})
+	sum := sha256.Sum256(b)
+	return "pair-" + hex.EncodeToString(sum[:])
+}
+
+// PairingIdentity returns the namespace captured when this paired connection
+// was constructed. An unbound NewConnection has no production identity.
+func (c *Connection) PairingIdentity() string { return c.pairingIdentity }
 
 func callTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
 	budget := defaultCallBudget

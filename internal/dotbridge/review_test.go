@@ -87,7 +87,11 @@ func TestDotReviewReadyCache(t *testing.T) {
 	status := map[string]any{"version": 1, "enabled": true, "paired": true, "ready": true, "code": "ready", "verified_at": now.Add(-time.Second), "expires_at": now.Add(time.Minute), "subscription": map[string]any{"state": "active", "expires_at": now.Add(5 * time.Second)}, "capabilities": map[string]bool{"text": true, "tasks": false}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _ = json.NewEncoder(w).Encode(status) }))
 	defer srv.Close()
-	c := newTestConnection(t, srv, "paired")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	cfg := Config{Address: strings.TrimPrefix(srv.URL, "http://"), Credential: "ready-fixture"}
+	if err := SavePairing(cfg, "paired"); err != nil { t.Fatal(err) }
+	c, err := PairedConnection()
+	if err != nil { t.Fatal(err) }
 	if _, err := c.Status(context.Background()); err != nil {
 		t.Fatal(err)
 	}

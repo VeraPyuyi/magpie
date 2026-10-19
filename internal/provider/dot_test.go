@@ -43,7 +43,8 @@ func enableDotBridgeForTest(t *testing.T) *httptest.Server {
 	if err := dotbridge.SavePairing(cfg, "paired-token"); err != nil {
 		t.Fatal(err)
 	}
-	conn := dotTestConnection(t, srv, "paired-token")
+	conn, err := dotbridge.PairedConnection()
+	if err != nil { t.Fatal(err) }
 	if _, err := conn.Status(context.Background()); err != nil {
 		t.Fatal(err)
 	}
