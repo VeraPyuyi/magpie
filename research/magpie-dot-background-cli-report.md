@@ -2,6 +2,68 @@
 
 Worktree: `f5ca8c/dot-automatic-routing` @ `285d6b2`
 
+## Rereview 1 (R1) scoped fix
+
+Scope: tests, docs and this report only. No production code was changed, and no
+broadening of I1–I3 or M1 was attempted.
+
+The broad-acl case in `TestDotReviewPairInvalidBoundary` wrote the fixture with
+0600 and skipped the platform access preparation. On Unix that file was private,
+current-user owned, regular and single-linked, so the production predicate
+correctly accepted it and the case failed on its own "must be rejected"
+assertions after a real fake-store write and config save. The case is replaced
+by platform-appropriate fixtures whose access is applied and then verified.
+
+- `internal/cli/dot_pair_fixture_test.go` holds the shared valid-shaped fixture,
+  the accepted-import proof (one exact-token store write, reference-only config,
+  retained file, no token printed) and the rejected-import proof (zero vault
+  writes, no config file, no output, expected status-call count, no token in
+  output or error).
+- `internal/cli/dot_input_unix_test.go` (`//go:build !windows`) applies a real
+  `chmod` and asserts the resulting mode before the CLI runs, for 0600 (the
+  accepted case) and 0640, 0644, 0666 (rejected, zero writes). Symlinked leaf,
+  hard-linked leaf and symlinked ancestor are rejected through the same
+  path. `TestDotOpenInputUnixRefusesLinks` covers the traversal predicate
+  directly, and `TestDotCheckFileUnixOwnership` checks effective-user
+  ownership, one link and a regular file on the open descriptor.
+- `internal/cli/dot_input_windows_test.go` (`//go:build windows`) applies real
+  security descriptors to real temporary files: protected current-user only
+  (accepted), an explicit Everyone read grant, and an unprotected DACL that
+  inherits from the profile directory. Both the input predicate and the full
+  pairing command are asserted. `TestDotInputWindowsAccess` also covers an
+  empty DACL.
+- `internal/cli/dot_fixture_red_unix_test.go` is the R1 control: the same
+  fixture at 0600 imports and writes once, while the 0600→0644 variant is
+  rejected with zero writes, so the difference is the fixture's mode rather
+  than any change to the predicate.
+
+Verification, Windows 10 host, `f5ca8c` at this revision:
+
+1. RED for the new boundary: before the platform fixtures, the broad-acl branch
+   reached the success path. The control above states the mode dependency
+   explicitly rather than relying on a cross-platform run I could not execute.
+2. `go test -tags nogui ./internal/cli -run '^TestDot' -count=1` — ok
+   (3.460s).
+3. `CGO_ENABLED=1 CC=C:/msys64/mingw64/bin/gcc.exe go test -race -tags nogui
+   ./internal/cli -run '^TestDot' -count=1` — ok (10.443s), and
+   `-count=20` — ok (19.579s).
+4. `go vet -tags nogui ./internal/cli` on Windows — ok.
+5. `GOOS=linux go vet -tags nogui ./internal/cli` and
+   `GOOS=darwin go vet -tags nogui ./internal/cli` — exit 0.
+
+Cross-platform execution limits, stated plainly: no Linux or macOS runtime was
+available on this machine. WSL2 has no distro installed, Docker is unavailable,
+and no Linux Go toolchain exists. The Linux and Darwin runs are cross-compiled
+vet only: they prove the `!windows` test file and the `unix` syscalls compile
+there, not that the Unix fixtures pass. The Unix mode, symlink and hardlink
+fixtures were therefore not executed. Every runtime claim above is Windows.
+The `!windows` build tag is broader than Unix, so no all-GOOS claim is made.
+
+Nothing outside `internal/cli` and `research/` was touched, and the other
+session's `internal/gateway` and `internal/dotbridge` working changes were left
+alone. Full repository suite, GUI suite, live DotControl pairing and the task
+probe remain unrun.
+
 ## Scope delivered
 
 - `internal/cli/dot_cli.go` plus tests and small pairing-file helpers
@@ -87,7 +149,7 @@ Runtime task probing in DotControl remains separate. The CLI now gates
 submission on the actual `Status.capabilities.tasks` field so background tasks
 can be enabled safely once the runtime probe flips that capability to true.
 
-## Review corrections (I1�CI4 and M1)
+## Review corrections (I1�CI4 and M1)
 
 The initial report overstated Windows private-file validation: the original
 Windows helper did not inspect ACLs. That implementation has been replaced.

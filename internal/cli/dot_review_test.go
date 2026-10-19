@@ -105,62 +105,58 @@ func TestDotReviewInvalidReceipts(t *testing.T) {
 }
 
 func TestDotReviewPairInvalidBoundary(t *testing.T) {
-	for _, kind := range []string{"unpaired", "bad-version", "nonloopback", "url", "duplicate", "case", "unknown", "trailing", "null", "broad-acl"} {
-		t.Run(kind, func(t *testing.T) {
+	// Cases that must be rejected after reaching the authenticated status
+	// endpoint, with an otherwise-valid private pairing fixture.
+	for _, tc := range []struct {
+		why    string
+		status func(http.ResponseWriter)
+	}{
+		{"unpaired", dotStatusUnpaired},
+		{"bad-version", dotStatusBadVersion},
+	} {
+		t.Run(tc.why, func(t *testing.T) {
 			store := dotSandbox(t)
 			var calls atomic.Int32
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			status := func(w http.ResponseWriter) {
 				calls.Add(1)
-				st := dotbridge.Status{Version: 1, Paired: true}
-				if kind == "unpaired" {
-					st.Paired = false
-				}
-				if kind == "bad-version" {
-					st.Version = 2
-				}
-				json.NewEncoder(w).Encode(st)
-			}))
-			defer srv.Close()
-			file := dotPairingFile{Version: 1, ClientID: "operator", QueueID: "operator", Token: "sentinel-private-token", Listen: strings.TrimPrefix(srv.URL, "http://"), CreatedAt: time.Now()}
-			if kind == "nonloopback" {
-				file.Listen = "192.0.2.1:1234"
+				tc.status(w)
 			}
-			if kind == "url" {
-				file.Listen = srv.URL
-			}
-			b, _ := json.Marshal(file)
-			switch kind {
-			case "duplicate":
-				b = append([]byte(`{"listen":"127.0.0.1:1",`), b[1:]...)
-			case "case":
-				b = bytes.Replace(b, []byte(`"token"`), []byte(`"Token"`), 1)
-			case "unknown":
-				b = append([]byte(`{"unknown":true,`), b[1:]...)
-			case "trailing":
-				b = append(b, []byte(` {}`)...)
-			case "null":
-				b = []byte(`null`)
-			}
-			p := filepath.Join(t.TempDir(), "pair.json")
-			os.WriteFile(p, b, 0600)
-			if kind != "broad-acl" {
-				dotTestPrivate(t, p)
-			}
+			path := dotPairFixture(t, dotPreparePrivate, nil, status)
 			var out bytes.Buffer
-			err := dotTo(context.Background(), &out, []string{"pair", p})
-			if err == nil || store.writes != 0 || out.Len() != 0 {
-				t.Fatal("unsafe import accepted", err, store.writes, out.String())
+			err := dotTo(context.Background(), &out, []string{"pair", path})
+			if err == nil {
+				t.Fatalf("%s: import was accepted", tc.why)
 			}
-			if _, err := os.Stat(filepath.Join(settings.Dir(), "dot-bridge.json")); !os.IsNotExist(err) {
-				t.Fatal("config written", err)
+			if store.writes != 0 {
+				t.Fatalf("%s: %d vault writes", tc.why, store.writes)
 			}
-			want := int32(0)
-			if kind == "unpaired" || kind == "bad-version" {
-				want = 1
+			if out.Len() != 0 {
+				t.Fatalf("%s: printed output: %s", tc.why, out.String())
 			}
-			if calls.Load() != want {
-				t.Fatalf("HTTP calls=%d want=%d", calls.Load(), want)
+			if _, statErr := os.Stat(filepath.Join(settings.Dir(), "dot-bridge.json")); !os.IsNotExist(statErr) {
+				t.Fatalf("%s: config was written: %v", tc.why, statErr)
 			}
+			if got := calls.Load(); got != 1 {
+				t.Fatalf("%s: status calls=%d, want 1", tc.why, got)
+			}
+		})
+	}
+	// Cases that must be rejected before any HTTP request, on a private fixture.
+	for _, tc := range []struct {
+		why       string
+		transform func(*dotPairingFile, string)
+		body      []byte
+	}{
+		{"nonloopback", func(f *dotPairingFile, _ string) { f.Listen = "192.0.2.1:1234" }, nil},
+		{"url", func(f *dotPairingFile, raw string) { f.Listen = raw }, nil},
+		{"duplicate", nil, []byte(`{"listen":"127.0.0.1:1","version":1,"client_id":"operator","queue_id":"operator","token":"sentinel-private-token","listen":"127.0.0.1:2","created_at":"2026-10-19T00:00:00Z"}`)},
+		{"case", nil, []byte(`{"Version":1,"ClientID":"operator","QueueID":"operator","Token":"sentinel-private-token","Listen":"127.0.0.1:1","CreatedAt":"2026-10-19T00:00:00Z"}`)},
+		{"unknown", nil, []byte(`{"unknown":true,"version":1,"client_id":"operator","queue_id":"operator","token":"sentinel-private-token","listen":"127.0.0.1:1","created_at":"2026-10-19T00:00:00Z"}`)},
+		{"trailing", nil, []byte(`{"version":1,"client_id":"operator","queue_id":"operator","token":"sentinel-private-token","listen":"127.0.0.1:1","created_at":"2026-10-19T00:00:00Z"} {}`)},
+		{"null", nil, []byte(`null`)},
+	} {
+		t.Run(tc.why, func(t *testing.T) {
+			dotPairRejected(t, tc.why, 0, tc.transform, tc.body, dotPreparePrivate)
 		})
 	}
 }

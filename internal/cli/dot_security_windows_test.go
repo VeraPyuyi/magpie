@@ -3,87 +3,34 @@ package cli
 import (
 	"bytes"
 	"context"
-	"golang.org/x/sys/windows"
 	"os"
-	"strings"
+	"path/filepath"
 	"testing"
+
+	"golang.org/x/sys/windows"
 )
 
-func dotTestPrivate(t *testing.T, path string) {
-	t.Helper()
-	user, err := windows.GetCurrentProcessToken().GetTokenUser()
-	if err != nil {
+// Real Windows handles and real temporary files: the opened file, its security
+// descriptor and its link count, not a rewritten copy of the predicate.
+func TestDotOpenInputHandleBoundaries(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "input.json")
+	if err := os.WriteFile(p, []byte(`{}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	dotTestACL(t, path, "O:"+user.User.Sid.String()+"D:P(A;;FA;;;"+user.User.Sid.String()+")")
-}
-func dotTestACL(t *testing.T, path, sddl string) {
-	t.Helper()
-	sd, err := windows.SecurityDescriptorFromString(sddl)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dacl, _, err := sd.DACL()
-	if err != nil {
-		t.Fatal(err)
-	}
-	owner, _, err := sd.Owner()
-	if err != nil {
-		t.Fatal(err)
-	}
-	flags := windows.SECURITY_INFORMATION(windows.DACL_SECURITY_INFORMATION | windows.PROTECTED_DACL_SECURITY_INFORMATION | windows.OWNER_SECURITY_INFORMATION)
-	if !strings.Contains(sddl, "D:P") {
-		flags = windows.DACL_SECURITY_INFORMATION | windows.UNPROTECTED_DACL_SECURITY_INFORMATION | windows.OWNER_SECURITY_INFORMATION
-	}
-	err = windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, flags, owner, nil, dacl, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-func TestDotReviewWindowsPrivacy(t *testing.T) {
-	user, err := windows.GetCurrentProcessToken().GetTokenUser()
-	if err != nil {
-		t.Fatal(err)
-	}
-	sid := user.User.Sid.String()
-	for _, tc := range []struct {
-		name, sddl string
-		ok         bool
-	}{
-		{"private", "O:" + sid + "D:P(A;;FA;;;" + sid + ")", true},
-		{"everyone", "O:" + sid + "D:P(A;;FA;;;" + sid + ")(A;;FR;;;WD)", false},
-		{"inherited-policy", "O:" + sid + "D:(A;;FA;;;" + sid + ")", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			p := t.TempDir() + "\\input.json"
-			if err := os.WriteFile(p, []byte(`{}`), 0600); err != nil {
-				t.Fatal(err)
-			}
-			dotTestACL(t, p, tc.sddl)
-			_, err := dotRead(p, true, 16384)
-			if (err == nil) != tc.ok {
-				t.Fatalf("private=%v err=%v", tc.ok, err)
-			}
-		})
-	}
-}
-
-func TestDotReviewHandleBoundaries(t *testing.T) {
-	p := t.TempDir() + "\\input.json"
-	os.WriteFile(p, []byte(`{}`), 0600)
 	dotTestPrivate(t, p)
 	f, closeInput, err := dotOpenInput(p)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer closeInput()
-	if err := os.Rename(p, p+".moved"); err == nil {
-		t.Fatal("opened leaf was replaceable")
-	}
 	if err := dotCheckFile(f, nil, true); err != nil {
 		t.Fatal(err)
 	}
-	// Query failures must not turn into a negative hard-link/privacy result.
+	// The opened leaf refuses a rename: another name for it is impossible.
+	if err := os.Rename(p, p+".moved"); err == nil {
+		t.Fatal("opened leaf was replaceable")
+	}
+	// A security query that fails must not read as "not hard linked, is private".
 	original := dotSecurityInfo
 	dotSecurityInfo = func(windows.Handle, windows.SE_OBJECT_TYPE, windows.SECURITY_INFORMATION) (*windows.SECURITY_DESCRIPTOR, error) {
 		return nil, os.ErrPermission
@@ -100,15 +47,21 @@ func TestDotReviewHandleBoundaries(t *testing.T) {
 	if err := os.Link(p, link); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { os.Remove(link) })
 	if _, err := dotRead(p, true, 16384); err == nil {
 		t.Error("hard-linked input accepted")
 	}
 }
 
-func TestDotReviewAncestorSubstitution(t *testing.T) {
+// Ancestor replacement cannot redirect the read: the open holds each parent.
+// Windows denies the rename outright, so the fixture asserts the bytes are
+// unchanged rather than asserting the rename succeeded.
+func TestDotOpenInputAncestorSubstitution(t *testing.T) {
 	dir := t.TempDir()
-	p := dir + "\\input.json"
-	os.WriteFile(p, []byte(`{}`), 0600)
+	p := filepath.Join(dir, "input.json")
+	if err := os.WriteFile(p, []byte(`{}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 	dotTestPrivate(t, p)
 	attempted := false
 	dotOpenComponentHook = func(current string, _ int) {
@@ -122,7 +75,8 @@ func TestDotReviewAncestorSubstitution(t *testing.T) {
 		}
 	}
 	defer func() { dotOpenComponentHook = nil }()
-	if b, err := dotRead(p, true, 16384); err != nil || string(b) != `{}` {
+	b, err := dotRead(p, true, 16384)
+	if err != nil || string(b) != `{}` {
 		t.Fatalf("substitution changed input: %s %v", b, err)
 	}
 	if !attempted {
@@ -130,33 +84,32 @@ func TestDotReviewAncestorSubstitution(t *testing.T) {
 	}
 }
 
-func TestDotReviewWrongOwnerFailsBeforeHTTP(t *testing.T) {
+// The wrong-owner branch is reached by substituting the descriptor after a
+// real handle query, since assigning a foreign owner to a real file needs
+// privileges this test does not have.
+func TestDotPairForeignOwnerRejected(t *testing.T) {
 	store := dotSandbox(t)
-	p := t.TempDir() + "\\pair.json"
-	os.WriteFile(p, []byte(`{"version":1,"client_id":"operator","queue_id":"operator","token":"sentinel","listen":"127.0.0.1:1","created_at":"2026-10-19T00:00:00Z"}`), 0600)
-	dotTestPrivate(t, p)
+	foreign, err := windows.CreateWellKnownSid(windows.WinWorldSid)
+	if err != nil {
+		t.Fatal(err)
+	}
 	original := dotSecurityInfo
 	defer func() { dotSecurityInfo = original }()
-	// Exercise the owner predicate without requiring SeRestorePrivilege to assign
-	// an arbitrary owner's SID to a real file. ACL acceptance uses real files above.
 	dotSecurityInfo = func(h windows.Handle, typ windows.SE_OBJECT_TYPE, flags windows.SECURITY_INFORMATION) (*windows.SECURITY_DESCRIPTOR, error) {
 		sd, err := original(h, typ, flags)
 		if err != nil {
 			return nil, err
 		}
-		foreign, err := windows.CreateWellKnownSid(windows.WinWorldSid)
-		if err != nil {
-			return nil, err
-		}
+		_ = sd // the real handle query must succeed before the owner is substituted
 		user, err := windows.GetCurrentProcessToken().GetTokenUser()
 		if err != nil {
 			return nil, err
 		}
-		_ = sd // The real handle query above must succeed before substituting owner.
 		return windows.SecurityDescriptorFromString("O:" + foreign.String() + "D:P(A;;FA;;;" + user.User.Sid.String() + ")")
 	}
+	path := dotPairFixture(t, dotPreparePrivate, nil, dotStatusPaired)
 	var out bytes.Buffer
-	if err := dotTo(context.Background(), &out, []string{"pair", p}); err == nil || store.writes != 0 || out.Len() != 0 {
+	if err := dotTo(context.Background(), &out, []string{"pair", path}); err == nil || store.writes != 0 || out.Len() != 0 {
 		t.Fatal("foreign owner accepted", err, store.writes)
 	}
 }
