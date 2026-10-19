@@ -343,5 +343,7 @@ func CachedReady(now time.Time) bool {
 	defer readyCache.Unlock()
 	s := readyCache.status
 	age := now.Sub(readyCache.at)
+	// "active" is a conservative provisional spelling until Task 2 pins the
+	// status endpoint's subscription states. Any other spelling fails closed.
 	return age >= 0 && age <= 10*time.Second && s.Version == 1 && s.Enabled && s.Paired && s.Ready && s.Capabilities.Text && s.Subscription.State == "active" && !s.VerifiedAt.IsZero() && !s.VerifiedAt.After(now) && now.Before(s.VerifiedAt.Add(10*time.Minute)) && now.Before(s.ExpiresAt) && now.Before(s.Subscription.ExpiresAt)
 }

@@ -91,7 +91,7 @@ func TestDotReviewReadyCache(t *testing.T) {
 	if _, err := c.Status(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if !CachedReady(now.Add(time.Second)) {
+	if !CachedReady(time.Now()) {
 		t.Fatal("verified authenticated status did not populate cache")
 	}
 	if CachedReady(now.Add(6 * time.Second)) {

@@ -42,9 +42,11 @@ func validateJobReceipt(job Job, digest, requestID, mode, sessionID string) erro
 	if job.Version != 1 {
 		return errReceipt
 	}
-	if !validID(job.JobID) || job.RequestID == "" || job.RequestDigest == "" || job.Mode == "" || job.SessionID == "" {
+	if !validID(job.JobID) || job.RequestID == "" || job.RequestDigest == "" || job.Mode == "" {
 		return errReceipt
 	}
+	// DotControl echoes optional session_id verbatim, including the empty string.
+	// Compare it to the Attempt identity; emptiness alone is not a bad receipt.
 	if job.RequestID != requestID || job.RequestDigest != digest || job.Mode != mode || job.SessionID != sessionID {
 		return errReceipt
 	}
