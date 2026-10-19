@@ -53,7 +53,7 @@ func TestBuiltinSwitch(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 			t.Fatal(err)
 		}
-		if len(out) != 14 {
+		if len(out) != len(pluginrt.Registered()) {
 			t.Fatalf("the built-ins: %+v", out)
 		}
 		for _, b := range out {

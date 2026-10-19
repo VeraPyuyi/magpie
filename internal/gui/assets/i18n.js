@@ -4,6 +4,9 @@
 // works. {name} slots are filled by t(str, vars).
 const I18N = {
   zh: {
+    // Dot operator page registry labels.
+    "DotControl": "DotControl",
+    "Dot background tasks": "Dot 后台任务",
     "None": "无",
     "Prompt": "提示词",
     "Request hook": "请求 Hook",
@@ -3723,6 +3726,9 @@ const I18N = {
     "Reading the reply": "读取回复",
   },
   "zh-TW": {
+    // Dot operator page registry labels.
+    "DotControl": "DotControl",
+    "Dot background tasks": "Dot 背景工作",
     "None": "無",
     "Prompt": "提示詞",
     "Request hook": "請求 Hook",
@@ -7427,6 +7433,9 @@ const I18N = {
     "Reading the reply": "讀取回覆",
   },
   ja: {
+    // Dot operator page registry labels.
+    "DotControl": "DotControl",
+    "Dot background tasks": "Dot バックグラウンドタスク",
     "None": "なし",
     "Prompt": "プロンプト",
     "Request hook": "リクエストフック",
@@ -11133,6 +11142,9 @@ const I18N = {
     "Reading the reply": "応答の読み取り",
   },
   de: {
+    // Dot operator page registry labels.
+    "DotControl": "DotControl",
+    "Dot background tasks": "Dot Hintergrundaufgaben",
     "None": "Keine",
     "Prompt": "Prompt",
     "Request hook": "Anfrage-Hook",
