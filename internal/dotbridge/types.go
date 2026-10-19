@@ -83,11 +83,19 @@ type Job struct {
 	Mode            string    `json:"mode"`
 	SessionID       string    `json:"session_id"`
 	State           string    `json:"state"`
+	Summary         string    `json:"summary,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 	CancelRequested bool      `json:"cancel_requested"`
 	Result          *Result   `json:"result,omitempty"`
 	ErrorCode       string    `json:"error_code,omitempty"`
+}
+
+// Capacity reports global retained job counts for operator visibility.
+type Capacity struct {
+	Limit     int `json:"limit"`
+	Retained  int `json:"retained"`
+	Remaining int `json:"remaining"`
 }
 
 // Status is the authenticated /dot-bridge/v1/status payload.
@@ -101,6 +109,7 @@ type Status struct {
 	ExpiresAt    time.Time          `json:"expires_at,omitempty"`
 	Subscription SubscriptionStatus `json:"subscription"`
 	Capabilities Capabilities       `json:"capabilities"`
+	Capacity     *Capacity          `json:"capacity,omitempty"`
 }
 
 // SubscriptionStatus describes the current authenticated subscription.

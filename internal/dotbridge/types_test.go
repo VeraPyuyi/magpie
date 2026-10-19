@@ -54,3 +54,23 @@ func TestDotDigestMatchesQueue(t *testing.T) {
 		t.Fatal("role order must change digest")
 	}
 }
+
+func TestJobAndStatusSummaryCapacityFields(t *testing.T) {
+	job := Job{Summary: "waiting for operator"}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(mustMarshal(job), &raw); err != nil || string(raw["summary"]) != `"waiting for operator"` {
+		t.Fatalf("job summary %#v", raw)
+	}
+	status := Status{Capacity: &Capacity{Limit: 100, Retained: 1, Remaining: 99}}
+	if err := json.Unmarshal(mustMarshal(status), &raw); err != nil || string(raw["capacity"]) == "" {
+		t.Fatalf("status capacity %#v", raw)
+	}
+}
+
+func mustMarshal(v any) []byte {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
