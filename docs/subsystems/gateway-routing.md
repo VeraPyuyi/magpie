@@ -142,7 +142,19 @@ are collected, `serve` checks `Snapshot.BlockReplay` before cancellation,
 slow-start handling, retries, patience replans or fallback. Accepted and
 uncertain submissions end the candidate loop while retaining shared trace,
 usage and recent-call bookkeeping. `Try.Dot` contains only the identity and
-state snapshot. Vendor headers and response JSON cannot create this state.
+acceptance snapshot. `Try.DotJob` separately records compact validated job
+observations as enqueue and poll complete, before the HTTP wait ends. Each
+observation is immutable, includes its observation time and never contains full
+prompt/result text or untrusted diagnostic strings. Final try reconstruction
+retains the latest observation. Vendor headers and response JSON cannot create
+this state.
+
+`Route.display_skipped_dot` captures configured Dot modes excluded during
+planning or final per-mode preflight. Fixed reason categories explain caller
+tools, local environment, missing final user task, unsupported parameters or
+unavailable mode. These rows appear beside other candidate seats and never make
+a skipped model eligible. The snapshot is captured for that request, including
+configured nested groups; later group edits do not rewrite its explanation.
 
 Dot waits use the configured answer budget (120 seconds by default, at most
 600) and the bridge client's short HTTP budget. Group FirstToken and reasoning

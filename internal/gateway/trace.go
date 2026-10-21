@@ -134,6 +134,9 @@ type Route struct {
 	// when it was on (Call.Archive), for the page to read its bodies back
 	// once the recent calls have let them go
 	Archive string `json:"archive,omitempty"`
+	// DisplaySkippedDot lists Dot members configured for this request but
+	// removed before execution, with the preflight reason. Observational only.
+	DisplaySkippedDot []DotSkipped `json:"display_skipped_dot,omitempty"`
 }
 
 // RouteUsage is one billable attempt's pricing inputs, kept in routing history.
@@ -365,6 +368,7 @@ type Try struct {
 	// Auto: the models Copilot's Auto picked for it, in turn — where each
 	// pick came from and Copilot's refusal of it — Model being "auto"
 	Auto     []provider.AutoPick `json:"auto,omitempty"`
+	DotJob   *DotJobObservation  `json:"dotJob,omitempty"`
 	Dot      *dotbridge.Snapshot `json:"dot,omitempty"`
 	DotError string              `json:"dot_error,omitempty"` // semantic job failure; Status is the HTTP wire status
 }

@@ -1,7 +1,7 @@
-# Dot Routing status and background task window
+# Dot Routing status and request history
 
 Routing always shows a Dot status row, including before pairing and while the
-optional background-task plugin is off. The row lives outside the trace's empty
+optional Dot page plugin is off. The row lives outside the trace's empty
 and offline containers. It reads the local-window `/api/dot/status` endpoint,
 not the gateway listener. Ready, probe required, offline, subscription expired,
 locally disabled and unpaired remain distinct. An authenticated active grant
@@ -37,12 +37,32 @@ existing policy. The GUI does not upload pairing files or return credentials.
   from actual task capability, authenticated server lease, pairing and
   subscription expiration. Text readiness cannot enable tasks.
 - `POST off` disables locally, retaining pairing and running work.
-- `POST jobs` accepts a task submission with explicit context messages and stable
-  request/session IDs. It checks fresh task capability before `Enqueue` and
+- The page has no manual task submission, task file upload, or context form.
+  Automatic group routing remains the task entry point.
+- The internal `POST jobs` endpoint accepts a task submission with explicit
+  context messages and stable request/session IDs. It checks fresh task capability before `Enqueue` and
   returns 202 for acceptance, without waiting for execution.
 - `GET requests` returns at most the latest 100 identity snapshots in this GUI's
   journal scope, distinct from CLI and gateway scopes. It contains no saved task
   or conversation text and provides no selected-history integration.
+- `GET gateway/requests` lists at most 100 current-pairing gateway records using
+  display identities only. It excludes GUI, CLI, legacy and previous pairing
+  namespaces and returns no digest, original fingerprint, scope or address.
+- `GET gateway/requests/{request_id}` derives the original gateway scope on the
+  server, rejects ambiguous identities, and uses validated Resume GET only.
+  Local disable permits recovery; replacement or removal cannot query the old
+  queue. These observational routes grant no cancellation or submission rights.
+  They retain the web-session and native-window guards described above.
+- Routing includes an always-available gateway history button, independent of
+  the optional Dot page. The optional page offers a separate “Routed through
+  Magpie” source with lookup only, while its original GUI source retains cancel.
+- The selected Routing request shows cloud job identity, actual observed state,
+  summary and observation time separately from acceptance and HTTP completion.
+  After HTTP waiting ends, the selected nonterminal job is refreshed by bounded
+  GET polling while visible (at most 60 polls, no faster than five seconds).
+  Selection revisions reject late results. Result text is literal, artifact URLs
+  are never fetched automatically, and later recovery does not rewrite route
+  history. Replay hides observations until their recorded observation time.
 - `GET requests/{request_id}` uses `Resume` to validate immutable journal identity
   and query the original request without POST. Unknown acceptance never causes
   automatic resubmission. The browser retains pending identity across reloads.
@@ -51,9 +71,9 @@ existing policy. The GUI does not upload pairing files or return credentials.
   is cancellation intent, never completion or a task result.
 
 The page renders result text literally with `textContent`; artifact links require
-HTTPS without user info and are never fetched automatically. State, placeholders
-and operator instructions are translated in English, Chinese, Traditional Chinese,
-Japanese and German. There is no production ready setter.
+HTTPS without user info and are never fetched automatically. State and operator
+instructions are translated in English, Chinese, Traditional Chinese, Japanese
+and German. There is no production ready setter.
 
 Focused checks use the existing isolated runners and fixture-only paired bridge:
 
@@ -65,6 +85,7 @@ node --test --test-concurrency=1 internal/gui/tests/dot-background.test.cjs inte
 ```
 
 The browser fixture runs Chromium and WebKit, all five languages, and narrow and
-wide windows. It covers task gating, explicit context, reload recovery, literal
-malicious result text, safe artifact links and cancellation intent. No live
+wide windows. It covers absence of manual submission controls, readiness refresh,
+existing request recovery, gateway history, literal malicious result text, safe
+artifact links and cancellation intent. No live
 account, personal configuration or OS credential store is used.

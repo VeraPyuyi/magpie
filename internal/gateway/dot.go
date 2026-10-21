@@ -34,7 +34,6 @@ var (
 type dotAttemptKey struct{}
 type dotSubmissionKey struct{}
 type dotPairingKey struct{}
-type dotProgressKey struct{}
 
 func withDotAttempt(ctx context.Context, attempt *dotbridge.Attempt) context.Context {
 	return context.WithValue(ctx, dotAttemptKey{}, attempt)
@@ -144,7 +143,6 @@ func prepareDot(r *http.Request, from provider.Protocol, model string, body []by
 		return r, err
 	}
 	ctx := context.WithValue(withDotAttempt(r.Context(), a), dotSubmissionKey{}, sub)
-	ctx = context.WithValue(ctx, dotProgressKey{}, new(dotbridge.Job))
 	return r.WithContext(ctx), nil
 }
 
@@ -193,9 +191,7 @@ func (s *Server) serveDot(w http.ResponseWriter, r *http.Request, from provider.
 		}
 		return writeError(w, from, 503, "dot bridge enqueue failed"), "dot bridge enqueue failed"
 	}
-	if progress, ok := r.Context().Value(dotProgressKey{}).(*dotbridge.Job); ok {
-		*progress = job
-	}
+	publishDot(r.Context(), job)
 	poll := time.NewTicker(2 * time.Second)
 	defer poll.Stop()
 	for {
@@ -231,9 +227,7 @@ func (s *Server) serveDot(w http.ResponseWriter, r *http.Request, from provider.
 			// currently returns an unchecked DTO, so it cannot authenticate an answer.
 			job, err = conn.ByRequest(ctx, a)
 			if err == nil {
-				if progress, ok := r.Context().Value(dotProgressKey{}).(*dotbridge.Job); ok {
-					*progress = job
-				}
+				publishDot(r.Context(), job)
 			}
 			if err != nil {
 				return 409, dotErrUnknown

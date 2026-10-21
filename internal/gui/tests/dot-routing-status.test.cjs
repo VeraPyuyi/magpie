@@ -26,7 +26,7 @@ for(const engine of process.env.BROWSER?[process.env.BROWSER]:['chromium','webki
   await page.goto('http://magpie.test/?view=routing');
   const row=page.locator('#rt-dot-status');await row.waitFor();
   for(const state of ['unpaired','disabled','offline','probe_required','subscription_expired','ready']) {
-   code=state;await row.locator('button').click();await page.waitForFunction(s=>document.querySelector('#rt-dot-status').dataset.state===s,state);
+   code=state;await row.getByRole('button',{name:await page.evaluate(()=>t('Refresh Dot status')),exact:true}).click();await page.waitForFunction(s=>document.querySelector('#rt-dot-status').dataset.state===s,state);
    assert.ok((await row.textContent()).includes('Dot'));
   }
   await page.locator('#rtNewGroup').click();

@@ -79,7 +79,7 @@ func TestDotGUIProductionAuth(t *testing.T) {
 	endpoints := []struct {
 		method, path string
 		want         int
-	}{{"GET", "status", 200}, {"GET", "requests", 200}, {"GET", "requests/auth-request", 200}, {"POST", "jobs", 202}, {"POST", "requests/auth-request/cancel", 200}, {"POST", "off", 200}}
+	}{{"GET", "status", 200}, {"GET", "requests", 200}, {"GET", "gateway/requests", 200}, {"GET", "gateway/requests/auth-request", 404}, {"GET", "requests/auth-request", 200}, {"POST", "jobs", 202}, {"POST", "requests/auth-request/cancel", 200}, {"POST", "off", 200}}
 	for _, host := range []string{"web", "native"} {
 		for _, endpoint := range endpoints {
 			t.Run(host+"/"+endpoint.path, func(t *testing.T) {

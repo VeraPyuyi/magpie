@@ -101,6 +101,10 @@ func dotRoutesWithConnection(mux *http.ServeMux, paired func() (*dotbridge.Conne
 			return
 		}
 		path := strings.TrimPrefix(r.URL.Path, "/api/dot/")
+		if strings.HasPrefix(path, "gateway/") && r.URL.RawQuery != "" {
+			dotReplyError(w, 400, "invalid_request")
+			return
+		}
 		if path == "status" && r.Method == "GET" {
 			code := "unpaired"
 			if dotbridge.PairingIdentity(cfg) != "" && !cfg.Enabled {
@@ -154,6 +158,27 @@ func dotRoutesWithConnection(mux *http.ServeMux, paired func() (*dotbridge.Conne
 				items = []dotbridge.Snapshot{}
 			}
 			writeJSON(w, items)
+			return
+		}
+		if path == "gateway/requests" && r.Method == "GET" {
+			items, err := dotGatewaySnapshots(cfg)
+			if err != nil {
+				dotReplyError(w, 503, "journal_unavailable")
+				return
+			}
+			if items == nil {
+				items = []dotGatewayDisplay{}
+			}
+			writeJSON(w, items)
+			return
+		}
+		if strings.HasPrefix(path, "gateway/requests/") {
+			id := strings.TrimPrefix(path, "gateway/requests/")
+			if r.Method != "GET" || id == "" || strings.Contains(id, "/") || r.URL.RawQuery != "" {
+				dotReplyError(w, 405, "method_not_allowed")
+				return
+			}
+			dotGatewayRequest(w, r, cfg, c, id)
 			return
 		}
 		if path == "status" && r.Method == "GET" && !cfg.Enabled {

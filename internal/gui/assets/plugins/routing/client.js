@@ -75,6 +75,31 @@ function routingPage(part) {
     catch { dotStatus = {code:"offline"}; }
     finally { dotRefresh.disabled = false; drawDotStatus(); }
   }
+  const dotHistoryButton = el("button", "text", t("Routed through Magpie"));
+  const dotHistory = el("section", "rt-dot-history"); dotHistory.hidden = true; dotRow.after(dotHistory); dotRow.append(dotHistoryButton);
+  dotHistoryButton.onclick = async () => {
+    dotHistory.hidden = !dotHistory.hidden;
+    if (dotHistory.hidden) return;
+    dotHistory.replaceChildren(el("h3", "", t("Routed through Magpie")));
+    try {
+      const response = await fetch("/api/dot/gateway/requests", {cache:"no-store"});
+      if (!response.ok) throw new Error("history");
+      for (const item of (await response.json()).slice(-100).reverse()) {
+        const row = el("div", ""), button = el("button", "text", item.request_id);
+        button.onclick = async () => {
+          const result = el("div", ""); row.replaceChildren(button, result);
+          try {
+            const response = await fetch("/api/dot/gateway/requests/" + encodeURIComponent(item.request_id),{cache:"no-store"});
+            if (!response.ok) throw new Error("lookup");
+            const job = await response.json(); if (job.request_id !== item.request_id) return;
+            result.append(el("p", "", job.job_id + " · " + t("Dot state: " + job.state)),el("pre", "", String(job.summary || "")));
+            if (job.result) result.append(el("pre", "", String(job.result.text || "")));
+          } catch { result.textContent = t("Dot acceptance is unknown"); }
+        };
+        row.append(button); dotHistory.append(row);
+      }
+    } catch { dotHistory.append(el("p", "", t("Dot acceptance is unknown"))); }
+  };
   dotRefresh.onclick = refreshDot;
   drawDotStatus(); refreshDot();
   setInterval(() => { if (shown()) refreshDot(); }, 5000);
@@ -1265,6 +1290,41 @@ function routingPage(part) {
   // otherwise vanish from the stage (#2129, wyq0x55: d-task's gpt-sol-6.1,
   // used up, wasn't shown while a used-up Claude was).
   const heldOut = (w) => !w.held && !!(w.capped || w.noCredits);
+  const dotSkipReasonWord = (reason) => t(({not_authorized:"Dot is not authorized for this request",not_candidate:"Dot was not a candidate for this request",caller_tools:"Dot skipped caller tools",local_environment:"Caller local environment",task_prompt_required:"A final user task is required",mode_unavailable:"Dot mode is unavailable",unsupported_request:"Unsupported request parameters"})[reason] || "Unsupported request parameters");
+  const dotSkipMode = (s) => s.model || s.mode || "";
+  const dotSkippedSummary = (skipped) => {
+    if (!skipped.length) return "";
+    const byReason = new Map();
+    for (const s of skipped) {
+      const reason = s.reason || "unsupported_request";
+      if (!byReason.has(reason)) byReason.set(reason, []);
+      byReason.get(reason).push(dotSkipMode(s));
+    }
+    if (byReason.size === 1) {
+      const [reason, modes] = [...byReason.entries()][0];
+      const modesText = modes.join(t(", "));
+      if (modes.length === 1) return t("{mode} {reason}", { mode: modes[0], reason: dotSkipReasonWord(reason) });
+      return t("{reason} ({modes})", { reason: dotSkipReasonWord(reason), modes: modesText });
+    }
+    const parts = [];
+    for (const [reason, modes] of byReason) for (const mode of modes) parts.push(t("{mode} {reason}", { mode, reason: dotSkipReasonWord(reason) }));
+    return parts.join(t("; "));
+  };
+  function dotSkippedSeats(r) {
+    const skipped = (r.display_skipped_dot || []).filter(Boolean);
+    if (!skipped.length) return [];
+    const modes = skipped.map(dotSkipMode).filter(Boolean);
+    return [{
+      id: "dot-skipped-" + r.id + "-" + r.time,
+      provider: "dot",
+      name: "DotControl",
+      icon: "dot",
+      kind: "provider",
+      model: modes.length === 1 ? modes[0] : modes.join(t(", ")),
+      dotSkipped: true,
+      dotSkipReason: dotSkippedSummary(skipped),
+    }];
+  }
   function seated(r) {
     const members = r.group?.members || [];
     const key = (w) => {
@@ -1278,13 +1338,15 @@ function routingPage(part) {
       return 0;
     };
     const on = new Set(r.order.map(seat));
-    return [...r.order, ...(r.left || []).filter((w) => heldOut(w) && !on.has(seat(w)))].sort(cmp);
+    const base = [...r.order, ...(r.left || []).filter((w) => heldOut(w) && !on.has(seat(w)))];
+    const skipped = dotSkippedSeats(r).filter((w) => !on.has(seat(w)));
+    return [...skipped, ...base].sort(cmp);
   }
 
   // a seat is one of a route's keys or accounts for one model: two of a
   // group's models on one provider go over the same keys, and are two seats
   // — as is one model a group has twice, each at an effort of its own
-  const seat = (x) => x.id + "\u0000" + (x.model || "") + (x.fixed ? ":" + x.fixed : "");
+  const seat = (x) => x.dotSkipped ? x.id : x.id + "\u0000" + (x.model || "") + (x.fixed ? ":" + x.fixed : "");
   // tried is the seat a try went to. A try's fixed is the effort it was
   // sent at by force — the member's own, or one its agent asked in the
   // model's id (a Claude Code tier at high) — where its seat's is the
@@ -1532,9 +1594,23 @@ function routingPage(part) {
     const ids = [], wOf = new Map(), rOf = new Map();
     for (const k of sets) {
       const r = latest.get(k);
-      for (const w of seated(r)) if (!ids.includes(seat(w))) ids.push(seat(w));
+      for (const w of seated(r)) if (!w.dotSkipped && !ids.includes(seat(w))) ids.push(seat(w));
     }
     for (const r of rs) for (const w of [...r.order, ...(r.left || [])]) { wOf.set(seat(w), w); rOf.set(seat(w), r.id); }
+    // Omissions belong to each staged request, even when candidate sets match.
+    // Compare recorded modes/reasons, independent of locale or candidate seats;
+    // the earliest request owns an identical summary's stable row identity.
+    const omissions = new Set(), skippedIds = [];
+    for (const r of [...rs].sort((a, b) => a.id - b.id || String(a.time).localeCompare(String(b.time)))) {
+      const evidence = JSON.stringify([...new Set((r.display_skipped_dot || []).filter(Boolean).map(s => JSON.stringify([dotSkipMode(s), s.mode || "", s.reason || "unsupported_request"])))].sort());
+      for (const w of dotSkippedSeats(r)) {
+        if (omissions.has(evidence)) continue;
+        omissions.add(evidence);
+        const id = seat(w);
+        skippedIds.push(id); wOf.set(id, w); rOf.set(id, r.id);
+      }
+    }
+    ids.unshift(...skippedIds);
     // where each was, of those on the stage: a key folded away was nowhere
     const before = new Map([...[...rows].map(([id, row]) => [id, row.li]), ...[...folds].map(([k, f]) => ["\u0001" + k, f.li])]
       .filter(([, li]) => li.isConnected).map(([id, li]) => [id, li.getBoundingClientRect().top]));
@@ -1739,6 +1815,7 @@ function routingPage(part) {
       const w = row.w, rest = rests.get(w.id) || rests.get(w.id + "\u0000" + (w.model || "")), resting = rest && at(rest.until) > n;
       let s;
       if (w.unlisted) s = unlistedWord(w);
+      else if (w.dotSkipped) s = t("Not involved in this execution: {reason}", { reason: w.dotSkipReason });
       else if (resting) s = `${failWord(rest.why)} · ${restWhen(rest)}`;
       // a row another request weighed, answering that one: the header
       // tells of this request, so it says the answer is not this one's
@@ -1777,7 +1854,7 @@ function routingPage(part) {
       lightRow(row.li, row.wire, on, flying);
       row.li.classList.toggle("low", !!(!w.routing && w.known && w.used >= 90));
       row.li.classList.toggle("rest", !!resting || gave.has(id));
-      row.li.classList.toggle("left", !!w.unlisted);
+      row.li.classList.toggle("left", !!w.unlisted || !!w.dotSkipped);
       if (on) row.wire.style.setProperty("--agent", hueOf(r.agent));
       row.wire.classList.toggle("rest", !!resting || !!w.unlisted);
     }
@@ -1868,10 +1945,69 @@ function routingPage(part) {
         logHead.append(live);
       }
     }
+    renderDotJob(r);
     renderSteps(r);
     holdStory();
     renderBodies(r);
     renderCtx(r);
+  }
+  const dotCard = el("section", "rt-dot-job");
+  logHead.after(dotCard);
+  let dotSelection = "", dotRevision = 0, dotDetails = null, dotPolls = 0, dotBusy = false, dotNext = 0, dotCardKey = "";
+  const dotTerminal = (s) => ["completed", "failed", "cancelled", "outcome_unknown"].includes(s);
+  const dotState = (s) => t("Dot state: " + s);
+  async function readDotJob(id, revision) {
+    if (dotBusy) return;
+    dotBusy = true;
+    try {
+      const response = await fetch("/api/dot/gateway/requests/" + encodeURIComponent(id), {cache:"no-store", signal:AbortSignal.timeout(10000)});
+      if (!response.ok) throw new Error("lookup");
+      const job = await response.json();
+      if (revision !== dotRevision || !dotSelection.endsWith(":" + id) || job.request_id !== id || !shown() || document.hidden || rp) return;
+      dotDetails = {...job, observed_at:new Date().toISOString()};
+    } catch { /* Retain the last observed state when a GET fails. */ }
+    finally { dotBusy = false; dotNext = Date.now() + 5000; if (revision === dotRevision) renderLog(); }
+  }
+  function renderDotJob(r) {
+    const tr = [...r.tries].reverse().find(x => x.dot || x.dotJob);
+    const id = tr?.dotJob?.request_id || tr?.dot?.request_id || "";
+    const key = rp ? "" : id ? r.id + ":" + id : "";
+    if (key !== dotSelection) { dotSelection = key; dotRevision++; dotDetails = null; dotPolls = 0; dotNext = 0; }
+    dotCard.hidden = !tr;
+    if (!tr) { dotCard.replaceChildren(); dotCardKey = ""; return; }
+    const job = !rp && dotDetails?.request_id === id ? dotDetails : tr.dotJob;
+    const drawKey = JSON.stringify([key, job, r.done, !!rp, document.documentElement.lang]);
+    if (drawKey === dotCardKey) {
+      if (!rp && shown() && !document.hidden && r.done && job && !dotTerminal(job.state) && dotPolls < 60 && Date.now() >= dotNext && !dotBusy) { dotPolls++; dotNext = Date.now()+5000; readDotJob(id,dotRevision); }
+      return;
+    }
+    dotCardKey = drawKey;
+    dotCard.replaceChildren(el("h3", "", t("Dot cloud task")));
+    dotCard.append(el("p", "", id + (job?.job_id ? " · " + job.job_id : "")));
+    dotCard.append(el("p", "rt-dot-state", job ? dotState(job.state) : t("Dot acceptance is unknown")));
+    if (r.done && job && !dotTerminal(job.state)) dotCard.append(el("p", "", t("HTTP wait ended; the Dot job is still active")));
+    if (job?.summary) dotCard.append(el("pre", "", String(job.summary).slice(0,2048)));
+    if (job?.error_code) dotCard.append(el("p", "", String(job.error_code).slice(0,256)));
+    if (job?.observed_at) dotCard.append(el("p", "", t("Dot observed at {time}", {time:job.observed_at})));
+    if (!rp && id) {
+      const refresh = el("button", "text", t("Refresh Dot job and result"));
+      refresh.onclick = () => readDotJob(id, dotRevision);
+      dotCard.append(refresh);
+    }
+    if (job?.result && !rp) {
+      dotCard.append(el("pre", "rt-dot-result", String(job.result.text || "")));
+      for (const item of job.result.artifacts || []) {
+        try {
+          const url = new URL(item.url);
+          if (url.protocol !== "https:" || !url.hostname || url.username || url.password) continue;
+          const link = el("a", "", item.label || url.hostname);
+          link.href = url.href; link.target = "_blank"; link.rel = "noopener noreferrer"; dotCard.append(link);
+        } catch {}
+      }
+    }
+    if (!rp && shown() && !document.hidden && r.done && job && !dotTerminal(job.state) && dotPolls < 60 && Date.now() >= dotNext && !dotBusy) {
+      dotPolls++; dotNext = Date.now() + 5000; readDotJob(id, dotRevision);
+    }
   }
   // A request's request and response (Fate on Discord: a request on this
   // page, a Codex prediction say, couldn't be opened to what was sent and
@@ -3162,9 +3298,14 @@ function routingPage(part) {
     const tries = [];
     g.r.tries.forEach((tr, i) => {
       const x = g.tries[i];
-      if (x.s <= v) tries.push(x.e <= v ? tr : { ...tr, done: false, status: 0, rest: null, again: false });
+      if (x.s <= v) {
+        const copy = x.e <= v ? {...tr} : { ...tr, done: false, status: 0, rest: null, again: false };
+        if (copy.dotJob && at(copy.dotJob.observed_at) > realAt(rp, v)[0]) { delete copy.dotJob; delete copy.dot; }
+        tries.push(copy);
+      }
     });
-    return { ...g.r, tries, done: g.e <= v };
+    const display_skipped_dot = (g.r.display_skipped_dot || []).filter(x => !x.observed_at || at(x.observed_at) <= realAt(rp,v)[0]);
+    return { ...g.r, tries, display_skipped_dot, done: g.e <= v };
   }
   // realAt is the time it was v into the replay, and how much faster than
   // time it runs there
@@ -3178,7 +3319,7 @@ function routingPage(part) {
     }
     return [ts[ts.length - 1], 1];
   }
-  const same = (a, b) => a.done === b.done && a.tries.length === b.tries.length && a.tries.every((x, i) => x.done === b.tries[i].done);
+  const same = (a, b) => JSON.stringify(a.display_skipped_dot || []) === JSON.stringify(b.display_skipped_dot || []) && a.done === b.done && a.tries.length === b.tries.length && a.tries.every((x, i) => x.done === b.tries[i].done && x.dotJob?.observed_at === b.tries[i].dotJob?.observed_at);
   function step(ts) {
     const p = rp;
     if (!p) return;
@@ -3197,7 +3338,7 @@ function routingPage(part) {
     }
     wake();
     // as the gateway's own trace would: a try begun or ended shows at once
-    if (moved) { if (cur && p.routes.has(cur.id)) cur = p.routes.get(cur.id); renderAll(); }
+    if (moved) { if (cur && p.routes.has(cur.id)) cur = p.routes.get(cur.id); sync(); renderAll(); }
     replayBar(p, fast);
     if (p.v > p.total && !playing.size) { endReplay(); return; }
     requestAnimationFrame(step);
@@ -3368,7 +3509,7 @@ function routingPage(part) {
   document.addEventListener("visibilitychange", start);
   window.addEventListener("focus", start);
   // countdowns tick once a second
-  setInterval(() => { if (shown()) { if (!pinned && loaded && cur) sync(); render(); renderActs(listed()); } }, 1000);
+  setInterval(() => { if (shown()) { if (!pinned && loaded && cur) sync(); render(); renderLog(); renderActs(listed()); } }, 1000);
 
   function offline(msg) {
     off.textContent = msg;

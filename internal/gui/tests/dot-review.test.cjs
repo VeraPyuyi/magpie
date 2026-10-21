@@ -55,9 +55,7 @@ for (const engine of process.env.BROWSER ? [process.env.BROWSER] : ['chromium','
     await lookup('B');await page.waitForFunction(()=>document.querySelector('#dot-result').textContent.includes('job-B'));
     await held(); await page.waitForLoadState('networkidle');
     assert.ok(!(await page.locator('#dot-result').textContent()).includes('job-A'),'late A cannot replace selected B');
-    await page.locator('#dot-new').focus();await page.keyboard.press('Enter');
-    assert.equal(await page.locator('#dot-result').textContent(),'');
-    assert.equal(await page.locator('#dot-task').inputValue(),'');
+    assert.equal(await page.locator('#dot-new, #dot-task, #dot-submit, #dot-context').count(),0);
    } else if(scenario==='refresh') {
     await lookup('B');await page.waitForFunction(()=>document.querySelector('#dot-result').textContent.includes('job-B'));
     await row('B').locator('button').last().focus();await page.keyboard.press('Enter');

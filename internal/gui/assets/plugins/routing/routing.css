@@ -1,3 +1,5 @@
+.rt-dot-job { padding: 12px; overflow-wrap: anywhere; scroll-margin-bottom: 70px; }
+.rt-dot-job pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 22rem; overflow: auto; }
 /* Routing, live: the Gateway view's stage for what routing does with each
    request (client.js). The same stage as the site's Model Routing, only
    played by the gateway's own trace. */

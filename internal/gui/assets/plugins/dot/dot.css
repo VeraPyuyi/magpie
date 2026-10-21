@@ -1,8 +1,6 @@
 #view-dot .dot-page { flex: none; box-sizing: border-box; width: 100%; max-width: 900px; margin: 0 auto; padding: 20px; }
-#view-dot textarea { display: block; width: 100%; box-sizing: border-box; margin: 8px 0 18px; resize: vertical; }
 #view-dot pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 #view-dot p, #view-dot span, #view-dot a { overflow-wrap: anywhere; }
 #view-dot .dot-actions, #view-dot .dot-request { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 14px 0; }
 #view-dot .dot-request span { flex: 1 1 100%; min-width: 0; }
-#view-dot label { display: block; }
 #view-dot #dot-result a { display: block; margin: 8px 0; }

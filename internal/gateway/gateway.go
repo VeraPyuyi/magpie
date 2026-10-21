@@ -2011,6 +2011,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			}
 		}
 	}
+	var displaySkippedDot []DotSkipped
 	var accountHeld bool // every candidate was an account or key the calling key may not use
 	if keyHeld || accHeld {
 		who := keyWho
@@ -2023,6 +2024,13 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			who.Models = nil
 		} else if isGroup {
 			members = groupKeeps(keyWho, g, ms)
+		}
+		for _, list := range [][]candidate{cands, pl.held, pl.capped, pl.unlisted} {
+			for _, c := range list {
+				if c.p.IsDot() && ((!members[c.p.ID+"/"+c.model] && !modelAllowed(who, c.p, c.model)) || !accountAllowed(who, c)) {
+					displaySkippedDot = append(displaySkippedDot, DotSkipped{Model: c.model, Mode: dotModeOfModel(c.model), Reason: "not_authorized"})
+				}
+			}
 		}
 		cands, pl, accountHeld = allowedCandidates(who, cands, pl, members)
 	}
@@ -2039,7 +2047,59 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			turnedAway()
 			return
 		}
+		if dotPlanned(cands, pl) && !dotReq.ok() {
+			displaySkippedDot = append(displaySkippedDot, dotDisplaySkipped(from, dotBody, cands, pl)...)
+		}
 		cands, pl = dotCandidates(cands, pl, dotReq)
+	}
+	if isGroup {
+		// Capture configured Dot members at planning time even when readiness
+		// removed them from the served catalog. This is display evidence only.
+		seenGroups := map[string]bool{}
+		var configured func(provider.Group)
+		configured = func(current provider.Group) {
+			if seenGroups[current.ID] {
+				return
+			}
+			seenGroups[current.ID] = true
+			for _, ref := range current.Members {
+				if strings.HasPrefix(ref, "group/") {
+					if child, _, ok := provider.FindGroup(strings.TrimPrefix(ref, "group/")); ok {
+						configured(child)
+					}
+					continue
+				}
+				model := strings.TrimPrefix(ref, "dot/")
+				if model == ref || model != provider.DotTextModel && model != provider.DotTaskModel {
+					continue
+				}
+				present := false
+				for _, list := range [][]candidate{cands, pl.held, pl.capped, pl.unlisted} {
+					for _, c := range list {
+						if c.p.IsDot() && c.model == model {
+							present = true
+						}
+					}
+				}
+				for _, list := range [][]Weighed{pl.left, pl.order, pl.unlistedW} {
+					for _, w := range list {
+						if w.Provider == provider.DotID && w.Model == model {
+							present = true
+						}
+					}
+				}
+				for _, item := range displaySkippedDot {
+					if item.Model == model {
+						present = true
+					}
+				}
+				if !present {
+					// Absence alone cannot prove readiness or body incompatibility.
+					displaySkippedDot = append(displaySkippedDot, DotSkipped{Model: model, Mode: dotModeOfModel(model), Reason: "not_candidate"})
+				}
+			}
+		}
+		configured(g)
 	}
 	// a conversation that stays strictly where it is goes on on its
 	// account past the usage cap set on it, and is refused there, not
@@ -2258,7 +2318,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		capture.tools = tools
 	}
 	tierAsked := bodyTier(from, body) // the service tier the client asked for (#1784)
-	tr := s.trace.beginFor(r, Route{turn: turn, dirOf: dirOf(from, plain), tools: tools, imageTurn: drawingTurnID(metadata.Turn), imageCaller: codexTurnKey(r, call.Agent), TitleLink: link, Pinned: pin, Time: start, Agent: call.Agent, Session: sessionOf(r.Header), Conv: convOf(r.Header, body), ParentSession: titleParentSession(r.Header, metadata, call.Kind), Kind: call.Kind, For: call.For, Model: call.Model, Effort: requestEffort(from, body), Tier: tierAsked, Provider: p.ID, Group: group, Rule: hit, Nested: nested, SealedTask: sealedTask, LeadAccount: leadAccount, Compaction: compactionWho(checkpoint), Subagent: subagent, SubagentEffort: subagentEffort, Sub: subOf(r.Header), SubagentID: subagentID, Affinity: shown, Order: pl.order, Left: pl.left})
+	tr := s.trace.beginFor(r, Route{turn: turn, dirOf: dirOf(from, plain), tools: tools, imageTurn: drawingTurnID(metadata.Turn), imageCaller: codexTurnKey(r, call.Agent), TitleLink: link, Pinned: pin, Time: start, Agent: call.Agent, Session: sessionOf(r.Header), Conv: convOf(r.Header, body), ParentSession: titleParentSession(r.Header, metadata, call.Kind), Kind: call.Kind, For: call.For, Model: call.Model, Effort: requestEffort(from, body), Tier: tierAsked, Provider: p.ID, Group: group, Rule: hit, Nested: nested, SealedTask: sealedTask, LeadAccount: leadAccount, Compaction: compactionWho(checkpoint), Subagent: subagent, SubagentEffort: subagentEffort, Sub: subOf(r.Header), SubagentID: subagentID, Affinity: shown, Order: pl.order, Left: pl.left, DisplaySkippedDot: displaySkippedDot})
 	if watched != nil {
 		watched.routeID = tr.ID
 	}
@@ -2605,6 +2665,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		// Check the final body after middleware, output limits, effort and
 		// tier rewrites, before a Dot attempt can queue or submit anything.
 		var dotRequest *http.Request
+		var dotLatestJob dotbridge.Job
+		var dotLatestObservation *DotJobObservation
 		if c.p.IsDot() {
 			recheck, err := dotRequirementsFor(from, attemptBody, c.model)
 			if original, ok := r.Context().Value(dotAdmissionKey{}).(dotAdmission); ok {
@@ -2624,6 +2686,12 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 					break
 				}
 				skipped = append(skipped, c.label()+": unsupported for dot")
+				reason := dotSkipReasonLabel(strings.Join(recheck.Unsupported, ", "))
+				s.trace.update(tr, func(t *Route) {
+					items := append([]DotSkipped(nil), t.DisplaySkippedDot...)
+					items = append(items, DotSkipped{Model: c.model, Mode: dotModeOfModel(c.model), Reason: reason, ObservedAt: time.Now().UTC()})
+					t.DisplaySkippedDot = items
+				})
 				continue
 			}
 			dotRequest, err = prepareDot(r, from, c.model, attemptBody)
@@ -2666,7 +2734,19 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			// once (hw.stop), not read on until the vendor hangs up
 			attemptContext := r.Context()
 			if dotRequest != nil {
-				attemptContext = dotRequest.Context()
+				tryIndex := len(tr.Tries) - 1
+				attemptContext = context.WithValue(dotRequest.Context(), dotObserverKey{}, func(job dotbridge.Job) {
+					dotLatestJob = job
+					observation := compactDotJob(job)
+					dotLatestObservation = observation
+					snap := dotAttemptOf(dotRequest.Context()).Snapshot()
+					s.trace.update(tr, func(t *Route) {
+						if tryIndex >= 0 && tryIndex < len(t.Tries) {
+							t.Tries[tryIndex].Dot = &snap
+							t.Tries[tryIndex].DotJob = observation
+						}
+					})
+				})
 			}
 			ctx, stop := context.WithCancel(withWireAt(attemptContext, at))
 			if isGroup {
@@ -2850,6 +2930,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			snap := dotAttemptOf(dotRequest.Context()).Snapshot()
 			if snap.BlockReplay {
 				try.Dot = &snap
+				if dotLatestJob.JobID != "" {
+					try.DotJob = dotLatestObservation
+				}
 				if r.Context().Err() != nil {
 					call.Status, call.Error = canceled(r.Context())
 					try.Fail = failCanceled
@@ -2874,12 +2957,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 					}
 					try.DotError = code
 					try.Fail = failOther
-					progress, _ := dotRequest.Context().Value(dotProgressKey{}).(*dotbridge.Job)
-					job := dotbridge.Job{}
-					if progress != nil {
-						job = *progress
-					}
-					call.Status = dotFailure(w, kept, from, snap, code, job)
+					call.Status = dotFailure(w, kept, from, snap, code, dotLatestJob)
 					if kept.sent {
 						call.Status = http.StatusOK
 					}
