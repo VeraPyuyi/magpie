@@ -113,12 +113,14 @@ type memberJSON struct {
 }
 
 type modelRef struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Provider string `json:"provider"`
-	PName    string `json:"providerName"`
-	Icon     string `json:"icon,omitempty"`
-	Context  int    `json:"context,omitempty"` // the tokens it takes, when known
+	Unavailable bool   `json:"unavailable,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Provider    string `json:"provider"`
+	PName       string `json:"providerName"`
+	Icon        string `json:"icon,omitempty"`
+	Context     int    `json:"context,omitempty"` // the tokens it takes, when known
 	// Efforts: the model's reasoning levels, when known — those a group's
 	// member of it may be fixed at
 	Efforts []string `json:"efforts,omitempty"`
@@ -242,6 +244,9 @@ func groupsState() groupsJSON {
 		if e.Group == "" {
 			out.Models = append(out.Models, servedRef(e))
 		}
+	}
+	if p, ok := provider.DotConfigurationOption(); ok && !slices.ContainsFunc(out.Models, func(m modelRef) bool { return m.ID == "dot/text" }) {
+		out.Models = append(out.Models, modelRef{ID: "dot/text", Name: "Dot text", Provider: p.ID, PName: p.Name, Icon: p.Icon, Unavailable: true, Reason: "Dot needs readiness before new requests"})
 	}
 	// every provider's models read once for the groups, not once a group
 	// (#1762)

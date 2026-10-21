@@ -163,8 +163,18 @@ func (s *Server) serveDot(w http.ResponseWriter, r *http.Request, from provider.
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(cfg.AnswerWaitSeconds)*time.Second)
 	defer cancel()
+	// A held provider/catalog snapshot is not authority to start new work.
+	st, statusErr := conn.Status(ctx)
+	if statusErr != nil || !st.Authorized(time.Now()) || !st.Capabilities.Text {
+		return writeError(w, from, 503, "dot bridge is not ready"), "dot bridge is not ready"
+	}
 	call.To = from // Queue attempts belong in the ledger even without an answer.
-	job, err := conn.Enqueue(ctx, sub, dotScope(r), a)
+	var job dotbridge.Job
+	if original := dotOriginalOf(r); original != "" {
+		job, err = conn.EnqueueOriginal(ctx, sub, dotScope(r), a, original)
+	} else {
+		job, err = conn.Enqueue(ctx, sub, dotScope(r), a)
+	}
 	if err != nil {
 		if a.Snapshot().BlockReplay {
 			return 409, dotErrUnknown

@@ -53,6 +53,33 @@ function routingPage(part) {
     try { return fn(); } finally { if (v.scrollTop !== top) v.scrollTop = top; }
   }
 
+  // Display status is independent of the execution catalog and trace stage.
+  const dotRow = el("div", "rt-dot-status");
+  dotRow.id = "rt-dot-status";
+  dotRow.setAttribute("role", "status");
+  const dotWords = el("span"), dotRefresh = el("button", "text");
+  dotRefresh.type = "button";
+  dotRow.append(el("b", "", "Dot"), dotWords, dotRefresh);
+  box.before(dotRow);
+  let dotStatus = {code: "offline"};
+  function drawDotStatus() {
+    const labels = {ready:"Dot is ready", probe_required:"Dot needs a capability probe in DotControl", offline:"DotControl is offline", subscription_expired:"Dot subscription expired; reconnect ChatGPT", disabled:"Dot is disabled locally", unpaired:"Dot is not paired; pair in the terminal", bridge_paused:"Dot bridge is paused", access_revoked:"Dot access was revoked; pair again"};
+    dotRow.dataset.state = dotStatus.code;
+    dotWords.textContent = t(labels[dotStatus.code] || labels.probe_required);
+    if (dotStatus.subscription?.renewal_state === "failed" || dotStatus.subscribe_failure) dotWords.textContent += " · " + t("Dot subscription renewal failed; ChatGPT must refresh it before expiry");
+    dotRefresh.textContent = t("Refresh Dot status");
+  }
+  async function refreshDot() {
+    dotRefresh.disabled = true;
+    try { const res = await fetch("/api/dot/status"); dotStatus = res.ok ? await res.json() : {code:"offline"}; }
+    catch { dotStatus = {code:"offline"}; }
+    finally { dotRefresh.disabled = false; drawDotStatus(); }
+  }
+  dotRefresh.onclick = refreshDot;
+  drawDotStatus(); refreshDot();
+  setInterval(() => { if (shown()) refreshDot(); }, 5000);
+  new MutationObserver(drawDotStatus).observe(document.documentElement, {attributes:true, attributeFilter:["lang"]});
+
   // ---------- the stage ----------
 
   const top = el("div", "rt-top");
@@ -3347,7 +3374,8 @@ function routingPage(part) {
     off.textContent = msg;
     off.hidden = !msg;
     for (const e of [top, stage, foot, log]) e.hidden = !!msg;
-    more.hidden = !!msg;
+    // Group configuration remains available while the trace gateway is offline.
+    more.hidden = false;
   }
 
   function empty() {
@@ -4502,7 +4530,7 @@ function routingPage(part) {
         const nm = el("span", "", memberName(id));
         nm.title = memberName(id);
         n.append(nm);
-        if (m || s) n.append(el("small", "", subOf(id) ? memberNote(id) : m.providerName));
+        if (m || s) n.append(el("small", "", m?.unavailable ? t("Dot needs readiness before new requests") : subOf(id) ? memberNote(id) : m.providerName));
         else if (info?.providerOff) n.append(el("small", "", `${info.name} · ${t("switched off")}`));
         const matched = d.matched.includes(id);
         if (matched) n.append(el("small", "", t("by pattern")));
@@ -4627,7 +4655,7 @@ function routingPage(part) {
       const decides = d.members.some((m) => !subOf(m) && deciderOf(m)), chats = d.members.some((m) => subOf(m) || !deciderOf(m));
       const subs = decides ? [] : groups.groups.filter((x) => !x.hidden && !x.decides && x.id !== g?.id && !(g && x.holds?.includes(g.id)))
         .map((x) => ({ value: "group/" + x.id, label: x.name, note: noted("group/" + x.id, "group/" + x.id), icons: groupIcons(x), group: ROUTING_GROUPS, ref: "group/" + x.id }));
-      const ref = (x) => ({ value: x.id, label: x.name || x.id, note: noted(x.providerName, x.id), icon: x.icon, group: x.providerName, ref: x.id, context: x.context });
+      const ref = (x) => ({ value: x.id, label: x.name || x.id, note: noted(x.unavailable ? (dotWords.textContent || t("Dot needs readiness before new requests")) : x.providerName, x.id), icon: x.icon, group: x.providerName, ref: x.id, context: x.context });
       const options = [...subs, ...(decides ? [] : groups.models.map(ref)), ...(chats ? [] : (groups.deciders || []).map(ref))];
       // the member a model is in the group as: itself, or with its
       // reasoning fixed (deepseek/x:max), which is ticked as it and taken

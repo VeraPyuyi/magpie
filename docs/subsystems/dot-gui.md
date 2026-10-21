@@ -1,4 +1,18 @@
-# Dot background task window
+# Dot Routing status and background task window
+
+Routing always shows a Dot status row, including before pairing and while the
+optional background-task plugin is off. The row lives outside the trace's empty
+and offline containers. It reads the local-window `/api/dot/status` endpoint,
+not the gateway listener. Ready, probe required, offline, subscription expired,
+locally disabled and unpaired remain distinct. An authenticated active grant
+whose refresh failed stays usable until its actual expiry and shows a renewal
+warning. ChatGPT owns `events/subscribe` renewal; Magpie never renews a grant.
+
+The routing-group model picker also always offers `dot/text` for configuration
+unless a stored endpoint owns the `dot` ID. `/api/groups.models` marks this
+extra display entry `unavailable` with a reason; it is not added to
+`provider.Served`. Saving it does not enable execution or advertise it to agents.
+Only a freshly authorized provider is eligible to run new requests.
 
 The optional `plugins/dot` built-in requires the existing `window` service and
 registers a `nav.page` contribution. Its scripts use the existing kernel page
@@ -20,7 +34,7 @@ private local pairing file using `magpie dot pair <private-pairing-file>`, verif
 existing policy. The GUI does not upload pairing files or return credentials.
 
 - `GET status` reports authenticated bridge status and `task_available`, computed
-  from actual task capability, readiness, verification freshness, pairing and
+  from actual task capability, authenticated server lease, pairing and
   subscription expiration. Text readiness cannot enable tasks.
 - `POST off` disables locally, retaining pairing and running work.
 - `POST jobs` accepts a task submission with explicit context messages and stable

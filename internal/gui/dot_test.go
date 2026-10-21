@@ -167,6 +167,10 @@ func TestDotGUIHandler(t *testing.T) {
 	if !strings.Contains(w.Body.String(), `"enabled":false`) {
 		t.Fatalf("disabled: %s", w.Body)
 	}
+	w = ask("GET", "requests/req-gui", "", nil)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "job-gui") {
+		t.Fatalf("disabled recovery: %d %s", w.Code, w.Body)
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	if cancels != 2 || posts != 1 {

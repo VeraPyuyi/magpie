@@ -44,7 +44,9 @@ func enableDotBridgeForTest(t *testing.T) *httptest.Server {
 		t.Fatal(err)
 	}
 	conn, err := dotbridge.PairedConnection()
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := conn.Status(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -82,6 +84,20 @@ func dotTestConnection(t *testing.T, srv *httptest.Server, token string) *dotbri
 		t.Fatal(err)
 	}
 	return conn
+}
+
+func TestDotConfiguredAutoGroupRetainsUnavailableMember(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if err := Save(Provider{ID: "other", Name: "Other", Key: "k", Models: []string{"text"}, Chat: "http://127.0.0.1:1/v1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveGroup(Group{ID: "auto-text", Name: "Text", Members: []string{"dot/text", "other/text"}}); err != nil {
+		t.Fatal(err)
+	}
+	g, ms, ok := FindGroup("group/auto-text")
+	if !ok || len(g.Members) != 2 || g.Members[0] != "dot/text" || len(ms) != 1 || ms[0].Provider.IsDot() {
+		t.Fatalf("configuration/execution mismatch: %+v %+v %v", g, ms, ok)
+	}
 }
 
 func TestDotProviderIsOptIn(t *testing.T) {

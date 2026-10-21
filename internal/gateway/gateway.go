@@ -1617,6 +1617,21 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		s.record(call)
 		logged()
 	}
+	recoveryWriter := &dotRecoveryWriter{ResponseWriter: w}
+	if s.recoverDotOwner(recoveryWriter, r, from, body) {
+		call.Status, call.Provider, call.To = recoveryWriter.status, provider.DotID, from
+		if call.Status >= 400 {
+			call.Error = "dot original request recovery requires attention"
+		}
+		finishCapture()
+		call.Millis = time.Since(start).Milliseconds()
+		s.record(call)
+		rec := usage.Record{Time: start, Agent: call.Agent, Via: call.Via, Provider: call.Provider, Model: "text", Requested: call.Model, Millis: call.Millis, Status: call.Status, Rejected: call.Status >= 400, Session: sessionOf(r.Header), NativeSession: nativeSessionOf(r.Header), Kind: call.Kind}
+		failedWith(&rec, call.Status, call.Error, "")
+		withBodies(&rec, &call)
+		appendUsage(r, rec)
+		return
+	}
 	// a model's id without a provider in it that names a routing group is
 	// the group's, as "group/<id>" is, rather than one provider's that
 	// serves it: the Routing view shows the group it went to

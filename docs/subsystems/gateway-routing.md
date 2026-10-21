@@ -125,6 +125,22 @@ uncertain submission, with request/job references and
 metadata is sent as a native SSE error with no successful completion.
 Disconnecting stops the wait and never sends a cancellation request.
 
+Before ordinary model resolution, `recoverDotOwner` checks a stable header
+against durable journal ownership for the authenticated caller and agent,
+including previous pairing namespaces. A hidden Dot model or reordered group
+cannot redirect that identity to a vendor. Recovery validates the original
+original-input fingerprint, final request digest and durable job ID and uses
+GET only, even after readiness expires. The original fingerprint is captured
+at the decoded body-read boundary before hooks or middleware and binds exact
+bytes and caller/protocol/model/path/session context. A legacy record without
+that hash fails closed for explicit original-ID recovery.
+A locally disabled pairing can use a recovery-only connection which rejects
+POST; removed or replaced credentials require original authorization and never
+cross queues. A middleware-transformed body that cannot reproduce the saved
+digest returns an explicit recovery conflict without dispatch. Restricted keys
+must currently permit `dot/text`; keys limited to a group alone require manual
+original-request recovery. Unknown acceptance never authorizes redispatch.
+
 `X-Magpie-Dot-Request-ID` supplies identity only. Valid explicit IDs are hashed
 with caller and agent scope; repeated matching requests query the existing
 job and changed content conflicts locally. Without this header, each HTTP

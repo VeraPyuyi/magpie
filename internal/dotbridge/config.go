@@ -165,6 +165,16 @@ func PairedConnection() (*Connection, error) {
 // cross-process config lock. Derive remote-operation scopes only from this cfg
 // (or c.PairingIdentity). Disabled snapshots return cfg with errDisabled.
 func BoundPairingSnapshot() (Config, *Connection, error) {
+	return boundPairingSnapshot(false)
+}
+
+// RecoveryPairingSnapshot permits only GET recovery while disabled locally.
+// The original credential and pairing identity must still be authorized.
+func RecoveryPairingSnapshot() (Config, *Connection, error) {
+	return boundPairingSnapshot(true)
+}
+
+func boundPairingSnapshot(recovery bool) (Config, *Connection, error) {
 	unlock, held := filelock.Lock(configPath()+".lock", filelock.Wait)
 	if !held {
 		return Config{}, nil, errInvalidConfig
@@ -177,15 +187,19 @@ func BoundPairingSnapshot() (Config, *Connection, error) {
 			err = writeConfig(cfg)
 		}
 	}
-	c, err := connectionForConfig(cfg, err)
+	c, err := connectionForConfigMode(cfg, err, recovery)
 	return cfg, c, err
 }
 
 func connectionForConfig(cfg Config, err error) (*Connection, error) {
+	return connectionForConfigMode(cfg, err, false)
+}
+
+func connectionForConfigMode(cfg Config, err error, recovery bool) (*Connection, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !cfg.Enabled {
+	if !cfg.Enabled && !recovery {
 		return nil, errDisabled
 	}
 	reference := cfg.Credential
@@ -194,7 +208,7 @@ func connectionForConfig(cfg Config, err error) (*Connection, error) {
 	}
 	c, err := NewConnection(cfg.Address, func() (string, error) {
 		current, err := LoadConfig()
-		if err != nil || !current.Enabled || PairingIdentity(current) != PairingIdentity(cfg) {
+		if err != nil || (!current.Enabled && !recovery) || PairingIdentity(current) != PairingIdentity(cfg) {
 			return "", errNotPaired
 		}
 		return loadPairToken(reference)
@@ -202,6 +216,7 @@ func connectionForConfig(cfg Config, err error) (*Connection, error) {
 	if err != nil {
 		return nil, err
 	}
+	c.recoveryOnly = recovery
 	c.pairingIdentity = PairingIdentity(cfg)
 	c.readinessRevision = cfg.ReadinessRevision
 	return c, nil

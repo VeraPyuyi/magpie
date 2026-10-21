@@ -13,14 +13,15 @@ import (
 )
 
 type journalRecord struct {
-	Scope       string `json:"scope"`
-	RequestID   string `json:"request_id"`
-	Digest      string `json:"digest"`
-	Mode        string `json:"mode"`
-	SessionID   string `json:"session_id"`
-	State       string `json:"state"`
-	JobID       string `json:"job_id,omitempty"`
-	BlockReplay bool   `json:"block_replay"`
+	OriginalFingerprint string `json:"original_fingerprint,omitempty"`
+	Scope               string `json:"scope"`
+	RequestID           string `json:"request_id"`
+	Digest              string `json:"digest"`
+	Mode                string `json:"mode"`
+	SessionID           string `json:"session_id"`
+	State               string `json:"state"`
+	JobID               string `json:"job_id,omitempty"`
+	BlockReplay         bool   `json:"block_replay"`
 }
 
 type journalFile struct {
@@ -86,13 +87,14 @@ func writeJournal(file journalFile) error {
 
 func recordToSnapshot(rec journalRecord) Snapshot {
 	return Snapshot{
-		RequestID:   rec.RequestID,
-		Digest:      rec.Digest,
-		JobID:       rec.JobID,
-		State:       rec.State,
-		Mode:        rec.Mode,
-		SessionID:   rec.SessionID,
-		BlockReplay: rec.BlockReplay,
+		OriginalFingerprint: rec.OriginalFingerprint,
+		RequestID:           rec.RequestID,
+		Digest:              rec.Digest,
+		JobID:               rec.JobID,
+		State:               rec.State,
+		Mode:                rec.Mode,
+		SessionID:           rec.SessionID,
+		BlockReplay:         rec.BlockReplay,
 	}
 }
 
@@ -114,6 +116,11 @@ func withJournal(fn func(*journalFile) error) error {
 
 // Reserve atomically records identity before I/O.
 func Reserve(sub Submission, scope string) (Snapshot, bool, error) {
+	return reserveOriginal(sub, scope, "")
+}
+
+// reserveOriginal atomically binds original caller input and final wire digest.
+func reserveOriginal(sub Submission, scope, original string) (Snapshot, bool, error) {
 	if err := validateSubmission(sub); err != nil {
 		return Snapshot{}, false, err
 	}
@@ -128,7 +135,7 @@ func Reserve(sub Submission, scope string) (Snapshot, bool, error) {
 			if rec.Scope != scope || rec.RequestID != sub.RequestID {
 				continue
 			}
-			if rec.Digest != digest {
+			if rec.Digest != digest || (original != "" && rec.OriginalFingerprint != original) {
 				return errDigestConflict
 			}
 			snap = recordToSnapshot(rec)
@@ -139,13 +146,14 @@ func Reserve(sub Submission, scope string) (Snapshot, bool, error) {
 			return errJournal
 		}
 		rec := journalRecord{
-			Scope:       scope,
-			RequestID:   sub.RequestID,
-			Digest:      digest,
-			Mode:        sub.Mode,
-			SessionID:   sub.SessionID,
-			State:       attemptAcceptanceUnknown,
-			BlockReplay: true,
+			OriginalFingerprint: original,
+			Scope:               scope,
+			RequestID:           sub.RequestID,
+			Digest:              digest,
+			Mode:                sub.Mode,
+			SessionID:           sub.SessionID,
+			State:               attemptAcceptanceUnknown,
+			BlockReplay:         true,
 		}
 		file.Records = append(file.Records, rec)
 		snap = recordToSnapshot(rec)
@@ -168,8 +176,21 @@ func SaveAttempt(scope string, snapshot Snapshot) error {
 			if rec.Scope != scope || rec.RequestID != snapshot.RequestID {
 				continue
 			}
-			if rec.Digest != snapshot.Digest {
+			if rec.Digest != snapshot.Digest || rec.Mode != snapshot.Mode || rec.SessionID != snapshot.SessionID || rec.OriginalFingerprint != snapshot.OriginalFingerprint {
 				return errDigestConflict
+			}
+			if rec.JobID != "" && rec.JobID != snapshot.JobID {
+				return errReceipt
+			}
+			if rec.State == attemptAccepted && snapshot.State != attemptAccepted {
+				return errReceipt
+			}
+			if (rec.State == StateCompleted || rec.State == StateFailed || rec.State == StateCancelled) && snapshot.State != rec.State {
+				return errReceipt
+			}
+			// A stale reservation cannot clear an existing acceptance barrier.
+			if rec.BlockReplay && !snapshot.BlockReplay {
+				return errReceipt
 			}
 			file.Records[i].State = snapshot.State
 			file.Records[i].JobID = snapshot.JobID

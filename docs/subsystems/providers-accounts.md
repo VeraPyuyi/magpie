@@ -60,8 +60,10 @@ The CLI's [`memberResolver`](../../internal/cli/groups_cli.go), used by
 snapshotting the served catalog. It uses the enabled pairing's authenticated
 status GET with the bridge client's ten-second HTTP budget, so a new CLI
 process can add `dot/text` without first running `magpie dot status` in that
-process. An unavailable or unready bridge exposes no Dot model. Existing saved
-members are still kept when unavailable and skipped during group resolution.
+process. An unavailable or unready bridge exposes no executable Dot model. The known
+`dot/text` member remains available for configuration in CLI add/set and the
+GUI picker, whose extra display entry is marked unavailable. Existing saved
+members are kept when unavailable and skipped during group resolution.
 Provider readiness predicates continue to use the validated cache without
 making HTTP requests.
 

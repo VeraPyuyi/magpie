@@ -91,9 +91,11 @@ magpie.plugin("dot", (ctx) => {
     available = false; controls();
     try {
       const st = await api("status"); available = st.task_available === true;
+      const stateLabels = {offline:"DotControl is offline", unpaired:"Dot is not paired; pair in the terminal", bridge_paused:"Dot bridge is paused", access_revoked:"Dot access was revoked; pair again"};
       const c = st.capacity;
       capacity = c && [c.limit,c.retained,c.remaining].every(Number.isSafeInteger) && c.limit > 0 && c.retained >= 0 && c.remaining >= 0 && c.retained + c.remaining === c.limit ? c : null;
-      status = !st.enabled ? "disabled" : available ? "ready" : !st.capabilities?.tasks ? "probe_required" : st.code && st.code !== "ready" ? st.code : "unverified";
+      status = stateLabels[st.code] || (st.code && st.code !== "ready" ? st.code : !st.enabled ? "disabled" : available ? "ready" : "probe_required");
+      if (st.subscription?.renewal_state === "failed" || st.subscribe_failure) note("Dot subscription renewal failed; ChatGPT must refresh it before expiry");
       capability = st.capabilities?.tasks ? "Task capability verified" : "Task probe required in DotControl";
     } catch { status = "unverified"; capacity = null; }
     q("status").textContent = say(status); q("capability").textContent = say(capability); drawCapacity();

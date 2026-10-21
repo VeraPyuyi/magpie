@@ -2,6 +2,29 @@
 
 Magpie talks to DotControl through a dedicated loopback HTTP client in `internal/dotbridge`. This package is intentionally separate from provider routing, gateway handlers, and UI work.
 
+Readiness uses `Status.Authorized`: the authenticated version 1 server's
+future proof expiry and active subscription expiry, with a nonfuture verified
+timestamp. Magpie imposes no additional ten-minute proof age and never extends
+either expiry. Optional `refresh_before`, `last_refreshed_at`, `renewal_state`
+and `subscribe_failure` diagnostics retain version 1 compatibility. The GUI
+shows renewal failure as a warning while the original grant remains authorized;
+ChatGPT alone requests subscription renewal.
+
+`RecoveryPairingSnapshot` allows original journal GET recovery after local off.
+It binds every read to the current original pairing credential and rejects all
+POST operations before reservation. An accepted job ID is immutable: a later
+receipt naming a different job fails validation, including concurrent lookups
+whose local snapshots both initially lack a job ID. `SaveAttempt` compares the
+original fingerprint, digest, mode, session and established job ID under the
+journal lock. Persistence conflicts propagate before any result is returned.
+
+New gateway stable-header reservations atomically store `original_fingerprint`
+alongside the final wire digest. The fingerprint hashes exact decoded request
+bytes plus caller/agent, protocol, model, path and session before any hooks or
+rewrites. JSON whitespace changes therefore conflict deliberately. No original
+prompt bytes are stored. Records lacking this fingerprint require explicit
+original-ID recovery and cannot authorize an automatic stable-header replay.
+
 ## Configuration
 
 - File: `settings.Dir()/dot-bridge.json`

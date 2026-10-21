@@ -100,22 +100,33 @@ type Capacity struct {
 
 // Status is the authenticated /dot-bridge/v1/status payload.
 type Status struct {
-	Version      int                `json:"version"`
-	Enabled      bool               `json:"enabled"`
-	Paired       bool               `json:"paired"`
-	Ready        bool               `json:"ready"`
-	Code         string             `json:"code"`
-	VerifiedAt   time.Time          `json:"verified_at,omitempty"`
-	ExpiresAt    time.Time          `json:"expires_at,omitempty"`
-	Subscription SubscriptionStatus `json:"subscription"`
-	Capabilities Capabilities       `json:"capabilities"`
-	Capacity     *Capacity          `json:"capacity,omitempty"`
+	Version          int                `json:"version"`
+	Enabled          bool               `json:"enabled"`
+	Paired           bool               `json:"paired"`
+	Ready            bool               `json:"ready"`
+	Code             string             `json:"code"`
+	VerifiedAt       time.Time          `json:"verified_at,omitempty"`
+	ExpiresAt        time.Time          `json:"expires_at,omitempty"`
+	Subscription     SubscriptionStatus `json:"subscription"`
+	Capabilities     Capabilities       `json:"capabilities"`
+	Capacity         *Capacity          `json:"capacity,omitempty"`
+	SubscribeFailure *SubscribeFailure  `json:"subscribe_failure,omitempty"`
 }
 
 // SubscriptionStatus describes the current authenticated subscription.
 type SubscriptionStatus struct {
-	State     string    `json:"state"`
-	ExpiresAt time.Time `json:"expires_at,omitempty"`
+	State           string    `json:"state"`
+	ExpiresAt       time.Time `json:"expires_at,omitempty"`
+	RefreshBefore   time.Time `json:"refresh_before,omitempty"`
+	LastRefreshedAt time.Time `json:"last_refreshed_at,omitempty"`
+	RenewalState    string    `json:"renewal_state,omitempty"`
+}
+
+// SubscribeFailure contains only bounded diagnostic codes, never callback data.
+type SubscribeFailure struct {
+	Code  string    `json:"code"`
+	Stage string    `json:"stage,omitempty"`
+	At    time.Time `json:"at,omitempty"`
 }
 
 // Capabilities describes abilities verified by the bridge policy.

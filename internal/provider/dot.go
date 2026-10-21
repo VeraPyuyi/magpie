@@ -25,6 +25,15 @@ func DotProvider() (Provider, bool) {
 	return dotBuiltin(), true
 }
 
+// DotConfigurationOption is a display/configuration entry, never execution
+// eligibility. A stored endpoint owning this ID retains its ordinary semantics.
+func DotConfigurationOption() (Provider, bool) {
+	if dotStoredCollision() {
+		return Provider{}, false
+	}
+	return dotBuiltin(), true
+}
+
 func dotBuiltin() Provider {
 	return Provider{
 		ID:   DotID,

@@ -358,14 +358,14 @@ func TestGroupDotReadiness(t *testing.T) {
 							t.Fatalf("resolved members: %+v", members)
 						}
 					} else {
-						if err == nil || !strings.Contains(err.Error(), `knows no model "dot/text"`) {
-							t.Fatalf("%s bridge accepted or gave unexpected error: %v", state, err)
+						if err != nil {
+							t.Fatalf("%s bridge configuration rejected: %v", state, err)
 						}
 						if _, _, ok := provider.Resolve("dot/text"); ok {
 							t.Fatal("unready bridge selected Dot")
 						}
 						g, findErr := findGroup("dot-e2e-validation")
-						if command == "add" && findErr == nil || command == "set" && (findErr != nil || strings.Join(g.Members, ",") != "a/only-a") {
+						if findErr != nil || strings.Join(g.Members, ",") != "dot/text,group/gh-light" {
 							t.Fatalf("failed %s changed group: %+v, %v", command, g, findErr)
 						}
 					}

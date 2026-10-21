@@ -73,7 +73,7 @@ func dotGUIScope(cfg dotbridge.Config) string {
 
 func dotTaskAvailable(st dotbridge.Status) bool {
 	now := time.Now()
-	return st.Version == 1 && st.Enabled && st.Paired && st.Ready && st.Capabilities.Tasks && st.Subscription.State == "active" && !st.VerifiedAt.IsZero() && !st.VerifiedAt.After(now) && now.Before(st.VerifiedAt.Add(10*time.Minute)) && now.Before(st.ExpiresAt) && now.Before(st.Subscription.ExpiresAt)
+	return st.Authorized(now) && st.Capabilities.Tasks
 }
 
 func dotReplyError(w http.ResponseWriter, status int, code string) {
@@ -101,6 +101,16 @@ func dotRoutesWithConnection(mux *http.ServeMux, paired func() (*dotbridge.Conne
 			return
 		}
 		path := strings.TrimPrefix(r.URL.Path, "/api/dot/")
+		if path == "status" && r.Method == "GET" {
+			code := "unpaired"
+			if dotbridge.PairingIdentity(cfg) != "" && !cfg.Enabled {
+				code = "disabled"
+			}
+			if !cfg.Enabled || dotbridge.PairingIdentity(cfg) == "" {
+				writeJSON(w, map[string]any{"enabled": cfg.Enabled, "code": code, "task_available": false, "text_available": false})
+				return
+			}
+		}
 		if path == "off" && r.Method == "POST" {
 			cfg.Enabled = false
 			if dotbridge.SaveConfig(cfg) != nil {
@@ -117,6 +127,10 @@ func dotRoutesWithConnection(mux *http.ServeMux, paired func() (*dotbridge.Conne
 		if cfg.Enabled {
 			c, err = paired()
 			if err != nil || c.PairingIdentity() == "" {
+				if path == "status" && r.Method == "GET" {
+					writeJSON(w, map[string]any{"enabled": true, "code": "unpaired", "task_available": false, "text_available": false})
+					return
+				}
 				dotReplyError(w, 503, "unverified")
 				return
 			}
@@ -146,8 +160,14 @@ func dotRoutesWithConnection(mux *http.ServeMux, paired func() (*dotbridge.Conne
 			writeJSON(w, map[string]any{"enabled": false, "code": "disabled", "task_available": false})
 			return
 		}
-		// Disabled pairings cannot perform bridge I/O. The enabled connection
-		// above was constructed only from machine configuration, never input.
+		// Local disable still permits validated recovery of an original request.
+		// The recovery connection rejects every POST, including cancellation.
+		if c == nil && r.Method == "GET" && strings.HasPrefix(path, "requests/") {
+			original, recovery, recoveryErr := dotbridge.RecoveryPairingSnapshot()
+			if recoveryErr == nil && dotbridge.PairingIdentity(original) == dotbridge.PairingIdentity(cfg) {
+				c = recovery
+			}
+		}
 		if c == nil {
 			dotReplyError(w, 503, "unverified")
 			return
@@ -155,13 +175,20 @@ func dotRoutesWithConnection(mux *http.ServeMux, paired func() (*dotbridge.Conne
 		if path == "status" && r.Method == "GET" {
 			st, err := c.Status(r.Context())
 			if err != nil {
-				dotReplyError(w, 503, "unverified")
+				writeJSON(w, map[string]any{"enabled": true, "paired": true, "code": "offline", "task_available": false, "text_available": false})
 				return
+			}
+			st.Code = st.DisplayCode(time.Now())
+			if st.SubscribeFailure != nil {
+				// Presence communicates renewal failure; raw server diagnostics are
+				// not needed by the window and may contain sensitive details.
+				st.SubscribeFailure = &dotbridge.SubscribeFailure{Code: "renewal_failed"}
 			}
 			writeJSON(w, struct {
 				dotbridge.Status
 				TaskAvailable bool `json:"task_available"`
-			}{st, dotTaskAvailable(st)})
+				TextAvailable bool `json:"text_available"`
+			}{st, dotTaskAvailable(st), st.Authorized(time.Now()) && st.Capabilities.Text})
 			return
 		}
 		if path == "jobs" && r.Method == "POST" {

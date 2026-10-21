@@ -210,7 +210,7 @@ func dotTo(ctx context.Context, out io.Writer, args []string) error {
 }
 
 func dotTaskReady(st dotbridge.Status, now time.Time) bool {
-	return st.Version == 1 && st.Enabled && st.Paired && st.Ready && st.Capabilities.Tasks && st.Subscription.State == "active" && !st.VerifiedAt.IsZero() && !st.VerifiedAt.After(now) && now.Before(st.VerifiedAt.Add(10*time.Minute)) && now.Before(st.ExpiresAt) && now.Before(st.Subscription.ExpiresAt)
+	return st.Authorized(now) && st.Capabilities.Tasks
 }
 
 func dotPair(ctx context.Context, out io.Writer, path string) error {

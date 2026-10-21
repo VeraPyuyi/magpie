@@ -62,7 +62,7 @@ func TestDotLegacyStableHeaderNeverReposts(t *testing.T) {
 			if !strings.Contains(w.Body.String(), oldID) {
 				t.Fatalf("missing explicit original recovery identity %s: %s", oldID, w.Body.String())
 			}
-			if changed && !strings.Contains(w.Body.String(), "conflict") {
+			if changed && !strings.Contains(w.Body.String(), "conflict") && !strings.Contains(w.Body.String(), "dot_original_fingerprint_required") {
 				t.Fatalf("lost legacy content conflict: %s", w.Body.String())
 			}
 			rows, err := dotbridge.Requests(oldScope)

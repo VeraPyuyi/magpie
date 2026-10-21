@@ -24,6 +24,7 @@ const (
 
 // Connection talks to the local Dot bridge API.
 type Connection struct {
+	recoveryOnly      bool
 	baseURL           string
 	pairingIdentity   string
 	readinessRevision string
@@ -100,6 +101,9 @@ func (c *Connection) authHeader() (string, error) {
 }
 
 func (c *Connection) do(ctx context.Context, method, path string, body []byte) (*http.Response, []byte, error) {
+	if c.recoveryOnly && method != http.MethodGet {
+		return nil, nil, errDisabled
+	}
 	ctx, cancel := callTimeout(ctx)
 	defer cancel()
 	auth, err := c.authHeader()
@@ -160,6 +164,9 @@ func encodeSubmission(sub Submission) ([]byte, error) {
 
 // Submit performs the single POST for a new job attempt.
 func (c *Connection) Submit(ctx context.Context, sub Submission, attempt *Attempt) (Job, error) {
+	if c.recoveryOnly {
+		return Job{}, errDisabled
+	}
 	if attempt == nil {
 		return Job{}, errInvalidBody
 	}
@@ -265,6 +272,21 @@ func (c *Connection) Cancel(ctx context.Context, jobID string) (Job, error) {
 
 // Enqueue reserves identity and either looks up or submits once.
 func (c *Connection) Enqueue(ctx context.Context, sub Submission, scope string, attempt *Attempt) (Job, error) {
+	return c.enqueueOriginal(ctx, sub, scope, attempt, "")
+}
+
+// EnqueueOriginal binds the gateway's original-input fingerprint at reservation.
+func (c *Connection) EnqueueOriginal(ctx context.Context, sub Submission, scope string, attempt *Attempt, original string) (Job, error) {
+	if len(original) != 64 {
+		return Job{}, errInvalidBody
+	}
+	return c.enqueueOriginal(ctx, sub, scope, attempt, original)
+}
+
+func (c *Connection) enqueueOriginal(ctx context.Context, sub Submission, scope string, attempt *Attempt, original string) (Job, error) {
+	if c.recoveryOnly {
+		return Job{}, errDisabled
+	}
 	if attempt == nil {
 		return Job{}, errInvalidBody
 	}
@@ -282,7 +304,7 @@ func (c *Connection) Enqueue(ctx context.Context, sub Submission, scope string, 
 	if err := c.checkPairingScope(scope); err != nil {
 		return Job{}, err
 	}
-	snapshot, existing, err := Reserve(sub, scope)
+	snapshot, existing, err := reserveOriginal(sub, scope, original)
 	if err != nil {
 		return Job{}, err
 	}
@@ -294,14 +316,18 @@ func (c *Connection) Enqueue(ctx context.Context, sub Submission, scope string, 
 		if err != nil {
 			return Job{}, err
 		}
-		_ = SaveAttempt(scope, attempt.Snapshot())
+		if err := SaveAttempt(scope, attempt.Snapshot()); err != nil {
+			return Job{}, err
+		}
 		return job, nil
 	}
 	job, err := c.Submit(ctx, sub, attempt)
 	if err != nil {
 		return Job{}, err
 	}
-	_ = SaveAttempt(scope, attempt.Snapshot())
+	if err := SaveAttempt(scope, attempt.Snapshot()); err != nil {
+		return Job{}, err
+	}
 	return job, nil
 }
 
@@ -322,7 +348,9 @@ func (c *Connection) Resume(ctx context.Context, scope, requestID string) (Job, 
 	if err != nil {
 		return Job{}, attempt, err
 	}
-	_ = SaveAttempt(scope, attempt.Snapshot())
+	if err := SaveAttempt(scope, attempt.Snapshot()); err != nil {
+		return Job{}, attempt, err
+	}
 	return job, attempt, nil
 }
 
@@ -337,7 +365,7 @@ func (c *Connection) checkPairingScope(scope string) error {
 		return errNotPaired
 	}
 	cfg, err := LoadConfig()
-	if err != nil || !cfg.Enabled || PairingIdentity(cfg) != c.pairingIdentity {
+	if err != nil || (!cfg.Enabled && !c.recoveryOnly) || PairingIdentity(cfg) != c.pairingIdentity {
 		return errNotPaired
 	}
 	return nil
@@ -412,7 +440,7 @@ func CachedReady(now time.Time) bool {
 	}
 	s := readyCache.status
 	age := now.Sub(readyCache.at)
-	// "active" is a conservative provisional spelling until Task 2 pins the
-	// status endpoint's subscription states. Any other spelling fails closed.
-	return age >= 0 && age <= 10*time.Second && s.Version == 1 && s.Enabled && s.Paired && s.Ready && s.Capabilities.Text && s.Subscription.State == "active" && !s.VerifiedAt.IsZero() && !s.VerifiedAt.After(now) && now.Before(s.VerifiedAt.Add(10*time.Minute)) && now.Before(s.ExpiresAt) && now.Before(s.Subscription.ExpiresAt)
+	// Cached authorization is bounded independently of the server's lease.
+	// Every other subscription state fails closed.
+	return age >= 0 && age <= 10*time.Second && s.Authorized(now) && s.Capabilities.Text
 }

@@ -10,25 +10,27 @@ func IsDigestConflict(err error) bool { return errors.Is(err, errDigestConflict)
 
 // Snapshot is a read-only copy of attempt state.
 type Snapshot struct {
-	RequestID   string `json:"request_id"`
-	Digest      string `json:"digest"`
-	JobID       string `json:"job_id,omitempty"`
-	State       string `json:"state"`
-	Mode        string `json:"mode"`
-	SessionID   string `json:"session_id"`
-	BlockReplay bool   `json:"block_replay"`
+	OriginalFingerprint string `json:"original_fingerprint,omitempty"`
+	RequestID           string `json:"request_id"`
+	Digest              string `json:"digest"`
+	JobID               string `json:"job_id,omitempty"`
+	State               string `json:"state"`
+	Mode                string `json:"mode"`
+	SessionID           string `json:"session_id"`
+	BlockReplay         bool   `json:"block_replay"`
 }
 
 // Attempt tracks one Dot submission's acceptance barrier.
 type Attempt struct {
-	mu          sync.Mutex
-	requestID   string
-	digest      string
-	jobID       string
-	state       string
-	mode        string
-	sessionID   string
-	blockReplay bool
+	mu                  sync.Mutex
+	requestID           string
+	digest              string
+	jobID               string
+	originalFingerprint string
+	state               string
+	mode                string
+	sessionID           string
+	blockReplay         bool
 }
 
 // NewAttempt validates IDs/body and computes immutable digest.
@@ -59,13 +61,14 @@ func (a *Attempt) Snapshot() Snapshot {
 
 func (a *Attempt) snapshot() Snapshot {
 	return Snapshot{
-		RequestID:   a.requestID,
-		Digest:      a.digest,
-		JobID:       a.jobID,
-		State:       a.state,
-		Mode:        a.mode,
-		SessionID:   a.sessionID,
-		BlockReplay: a.blockReplay,
+		OriginalFingerprint: a.originalFingerprint,
+		RequestID:           a.requestID,
+		Digest:              a.digest,
+		JobID:               a.jobID,
+		State:               a.state,
+		Mode:                a.mode,
+		SessionID:           a.sessionID,
+		BlockReplay:         a.blockReplay,
 	}
 }
 
@@ -81,6 +84,9 @@ func (a *Attempt) accept(job Job) error {
 	defer a.mu.Unlock()
 	if err := validateJobReceipt(job, a.digest, a.requestID, a.mode, a.sessionID); err != nil {
 		return err
+	}
+	if a.jobID != "" && a.jobID != job.JobID {
+		return errReceipt
 	}
 	a.jobID = job.JobID
 	a.state = attemptAccepted
@@ -103,6 +109,10 @@ func (a *Attempt) restore(snapshot Snapshot) error {
 		a.mode = snapshot.Mode
 		a.sessionID = snapshot.SessionID
 	}
+	if a.jobID != "" && a.jobID != snapshot.JobID {
+		return errReceipt
+	}
+	a.originalFingerprint = snapshot.OriginalFingerprint
 	a.jobID = snapshot.JobID
 	a.blockReplay = snapshot.BlockReplay
 	state := snapshot.State

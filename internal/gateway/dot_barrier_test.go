@@ -18,6 +18,8 @@ import (
 
 type dotBridgeHarness struct {
 	posts, gets, vendors atomic.Int32
+	unready              atomic.Bool
+	expired              atomic.Bool
 	mu                   sync.Mutex
 	jobs                 map[string]dotbridge.Job
 	state                string
@@ -39,7 +41,10 @@ func (h *dotBridgeHarness) serve() *httptest.Server {
 			w.WriteHeader(200)
 		case r.URL.Path == "/dot-bridge/v1/status":
 			now := time.Now().UTC()
-			json.NewEncoder(w).Encode(map[string]any{"version": 1, "enabled": true, "paired": true, "ready": true, "code": "ready", "verified_at": now.Add(-time.Second), "expires_at": now.Add(time.Minute), "subscription": map[string]any{"state": "active", "expires_at": now.Add(time.Minute)}, "capabilities": map[string]bool{"text": true}})
+			if h.expired.Load() {
+				now = now.Add(-time.Hour)
+			}
+			json.NewEncoder(w).Encode(map[string]any{"version": 1, "enabled": true, "paired": true, "ready": !h.unready.Load(), "code": "probe_required", "verified_at": now.Add(-time.Second), "expires_at": now.Add(time.Minute), "subscription": map[string]any{"state": "active", "expires_at": now.Add(time.Minute)}, "capabilities": map[string]bool{"text": true}})
 		case r.Method == "POST" && r.URL.Path == "/dot-bridge/v1/jobs":
 			h.posts.Add(1)
 			if h.onSubmit != nil {
