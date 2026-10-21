@@ -59,9 +59,11 @@ for (const engine of process.env.BROWSER ? [process.env.BROWSER] : ['chromium','
    assert.equal(await page.locator('.rt-dot-job:visible').count(),0,'before +8s, replay must not inherit completed Dot job or later GET result');
    assert.equal(await page.locator('.rt-dot-result:visible').count(),0);
    await seek(.49);
-   assert.equal(await page.locator('.rt-accts li.left').count(),0);
+   assert.equal(await page.locator('.rt-accts li.dot-skipped').count(),0);
    await page.clock.runFor(400);
-   assert.equal(await page.locator('.rt-accts li.left').count(),1,'skip must appear crossing +5s without try/count/done changes');
+   const skip=page.locator('.rt-accts li.dot-skipped');
+   assert.equal(await skip.count(),1,'skip must appear crossing +5s without try/count/done changes');
+   assert.deepEqual(await skip.evaluate(n=>({dimmed:n.classList.contains('left'),opacity:getComputedStyle(n.querySelector('b')).opacity})),{dimmed:false,opacity:'1'},'ready Dot skip stays at normal candidate color');
    await seek(.9);
    await page.waitForFunction(()=>document.querySelector('.rt-dot-job:not([hidden])')?.textContent.includes('job-B'));
    assert.ok((await page.locator('.rt-dot-state').textContent()).includes(await page.evaluate(()=>t('Dot state: completed'))));

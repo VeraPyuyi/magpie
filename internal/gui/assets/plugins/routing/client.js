@@ -62,10 +62,12 @@ function routingPage(part) {
   dotRow.append(el("b", "", "Dot"), dotWords, dotRefresh);
   box.before(dotRow);
   let dotStatus = {code: "offline"};
+  const dotStatusLabels = {ready:"Dot is ready", probe_required:"Dot needs a capability probe in DotControl", offline:"DotControl is offline", subscription_expired:"Dot subscription expired; reconnect ChatGPT", disabled:"Dot is disabled locally", unpaired:"Dot is not paired; pair in the terminal", bridge_paused:"Dot bridge is paused", access_revoked:"Dot access was revoked; pair again"};
+  const dotReady = () => dotStatus.code === "ready";
+  const dotStatusWord = () => t(dotStatusLabels[dotStatus.code] || dotStatusLabels.probe_required);
   function drawDotStatus() {
-    const labels = {ready:"Dot is ready", probe_required:"Dot needs a capability probe in DotControl", offline:"DotControl is offline", subscription_expired:"Dot subscription expired; reconnect ChatGPT", disabled:"Dot is disabled locally", unpaired:"Dot is not paired; pair in the terminal", bridge_paused:"Dot bridge is paused", access_revoked:"Dot access was revoked; pair again"};
     dotRow.dataset.state = dotStatus.code;
-    dotWords.textContent = t(labels[dotStatus.code] || labels.probe_required);
+    dotWords.textContent = dotStatusWord();
     if (dotStatus.subscription?.renewal_state === "failed" || dotStatus.subscribe_failure) dotWords.textContent += " · " + t("Dot subscription renewal failed; ChatGPT must refresh it before expiry");
     dotRefresh.textContent = t("Refresh Dot status");
   }
@@ -1815,8 +1817,10 @@ function routingPage(part) {
       const w = row.w, rest = rests.get(w.id) || rests.get(w.id + "\u0000" + (w.model || "")), resting = rest && at(rest.until) > n;
       let s;
       if (w.unlisted) s = unlistedWord(w);
-      else if (w.dotSkipped) s = t("Not involved in this execution: {reason}", { reason: w.dotSkipReason });
-      else if (resting) s = `${failWord(rest.why)} · ${restWhen(rest)}`;
+      else if (w.dotSkipped) {
+        s = t("Not involved in this execution: {reason}", { reason: w.dotSkipReason });
+        if (!dotReady()) s += " · " + dotStatusWord();
+      } else if (resting) s = `${failWord(rest.why)} · ${restWhen(rest)}`;
       // a row another request weighed, answering that one: the header
       // tells of this request, so it says the answer is not this one's
       else if (trying.has(id)) s = r.id !== cur.id && agents.size <= 1 ? t("answering another request…") : t("answering…");
@@ -1854,7 +1858,9 @@ function routingPage(part) {
       lightRow(row.li, row.wire, on, flying);
       row.li.classList.toggle("low", !!(!w.routing && w.known && w.used >= 90));
       row.li.classList.toggle("rest", !!resting || gave.has(id));
-      row.li.classList.toggle("left", !!w.unlisted || !!w.dotSkipped);
+      // A request omission alone does not make Dot unavailable.
+      row.li.classList.toggle("dot-skipped", !!w.dotSkipped);
+      row.li.classList.toggle("left", !!w.unlisted || !!(w.dotSkipped && !dotReady()));
       if (on) row.wire.style.setProperty("--agent", hueOf(r.agent));
       row.wire.classList.toggle("rest", !!resting || !!w.unlisted);
     }

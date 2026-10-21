@@ -39,7 +39,7 @@ for(const engine of process.env.BROWSER?[process.env.BROWSER]:['chromium','webki
   const routes=[make(1,caller),make(2,required)];
   const posts=await fixture(page,lang,routes);
   await page.goto('http://magpie.test/?view=routing');
-  const skipped=page.locator('.rt-accts li.left').filter({hasText:'DotControl'});
+  const skipped=page.locator('.rt-accts li.dot-skipped');
   await skipped.first().waitFor();
   assert.equal(await skipped.count(),2,'both concurrent requests must retain their different omissions');
   const words=await page.evaluate(()=>[t('Dot skipped caller tools'),t('A final user task is required')]);
@@ -57,7 +57,7 @@ for(const engine of process.env.BROWSER?[process.env.BROWSER]:['chromium','webki
   routes[1]=make(2,[...caller].reverse());
   await page.reload();await skipped.first().waitFor();
   assert.equal(await skipped.count(),1,'identical evidence deduplicates with matching candidate sets and reversed record order');
-  assert.equal(await page.locator('.rt-accts li.left.on, .rt-accts li.left.now').count(),0,'omissions never execute');
+  assert.equal(await page.locator('.rt-accts li.on, .rt-accts li.now').filter({hasText:'DotControl'}).count(),0,'omissions never execute');
   assert.equal(posts(),0);
  });
  test(`${engine}: mounted Dot history source buttons retranslate through all five locales`,async t=>{

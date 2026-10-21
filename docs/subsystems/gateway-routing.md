@@ -155,6 +155,12 @@ tools, local environment, missing final user task, unsupported parameters or
 unavailable mode. These rows appear beside other candidate seats and never make
 a skipped model eligible. The snapshot is captured for that request, including
 configured nested groups; later group edits do not rewrite its explanation.
+The routing UI merges these modes into one omission summary per distinct request
+evidence. A ready Dot retains normal candidate color with the translated
+“Not involved in this execution” note. When `/api/dot/status` reports Dot unready,
+that summary is dimmed and also shows the current status reason; actual executing
+and answered Dot seats retain their trace-driven appearance. This status display
+does not alter eligibility or submit requests.
 
 Dot waits use the configured answer budget (120 seconds by default, at most
 600) and the bridge client's short HTTP budget. Group FirstToken and reasoning

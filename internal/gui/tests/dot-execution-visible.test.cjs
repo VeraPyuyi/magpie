@@ -35,7 +35,7 @@ for(const engine of process.env.BROWSER?[process.env.BROWSER]:['chromium','webki
    try{return route.fulfill({body:await fs.readFile(path.join(assets,u.pathname==='/'?'index.html':u.pathname)),contentType:{'.html':'text/html','.js':'text/javascript','.css':'text/css','.svg':'image/svg+xml'}[path.extname(u.pathname==='/'?'index.html':u.pathname)]});}catch{return route.fulfill({status:404,body:''});}
   });
   await page.goto('http://magpie.test/?view=routing');
-  const skipped=page.locator('.rt-accts li.left').filter({hasText:'DotControl'});
+  const skipped=page.locator('.rt-accts li.dot-skipped');
   await skipped.first().waitFor();
   assert.equal(await skipped.count(),1,`${lang}: same-reason skips collapse to one row`);
   const shared=await page.evaluate(()=>t('Not involved in this execution: {reason}',{reason:t('{reason} ({modes})',{reason:t('Dot skipped caller tools'),modes:['text','task'].join(t(', '))})}));
@@ -48,7 +48,7 @@ for(const engine of process.env.BROWSER?[process.env.BROWSER]:['chromium','webki
   const mixed=await page.evaluate(()=>t('Not involved in this execution: {reason}',{reason:[t('{mode} {reason}',{mode:'text',reason:t('Dot skipped caller tools')}),t('{mode} {reason}',{mode:'task',reason:t('A final user task is required')})].join(t('; '))}));
   assert.ok((await skipped.textContent()).includes(mixed),`${lang}: different reasons stay separate`);
   assert.equal(await page.locator('.rt-accts li').filter({hasText:'DotControl'}).count(),2);
-  assert.equal(await page.locator('.rt-accts li.on:not(.left)').filter({hasText:'DotControl'}).count(),1);
+  assert.equal(await page.locator('.rt-accts li.on').filter({hasText:'DotControl'}).count(),1);
   stage='job';await page.reload();
   await page.locator('.rt-dot-job').waitFor();
   await page.waitForFunction(()=>document.querySelector('.rt-dot-job')?.textContent.includes('job-visible'));
