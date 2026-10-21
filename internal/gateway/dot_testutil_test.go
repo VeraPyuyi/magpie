@@ -67,11 +67,11 @@ func enableDotBridgeForGateway(t *testing.T, jobs ...http.Handler) *httptest.Ser
 			"version": 1, "enabled": true, "paired": true, "ready": true, "code": "ready",
 			"verified_at": now.Add(-time.Second), "expires_at": now.Add(time.Minute),
 			"subscription": map[string]any{"state": "active", "expires_at": now.Add(5 * time.Minute)},
-			"capabilities": map[string]bool{"text": true, "tasks": false},
+			"capabilities": map[string]bool{"text": true, "tasks": true},
 		})
 	}))
 	t.Cleanup(srv.Close)
-	cfg := dotbridge.Config{Enabled: true, Address: strings.TrimPrefix(srv.URL, "http://"), Credential: "pair-ref", AnswerWaitSeconds: 120}
+	cfg := dotbridge.Config{Enabled: true, Address: strings.TrimPrefix(srv.URL, "http://"), Credential: "pair-ref", AnswerWaitSeconds: 120, TaskWaitSeconds: 600}
 	if err := dotbridge.SaveConfig(cfg); err != nil {
 		t.Fatal(err)
 	}

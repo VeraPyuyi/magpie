@@ -11,7 +11,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/yetone/magpie/internal/access"
 	"github.com/yetone/magpie/internal/dotbridge"
@@ -35,6 +34,7 @@ var (
 type dotAttemptKey struct{}
 type dotSubmissionKey struct{}
 type dotPairingKey struct{}
+type dotProgressKey struct{}
 
 func withDotAttempt(ctx context.Context, attempt *dotbridge.Attempt) context.Context {
 	return context.WithValue(ctx, dotAttemptKey{}, attempt)
@@ -87,7 +87,7 @@ func dotSessionID(r *http.Request, requestID string) string {
 
 // prepareDot binds immutable identity and the exact client-owned Attempt before
 // attempt runs. Neither headers nor a vendor response can set its replay state.
-func prepareDot(r *http.Request, from provider.Protocol, body []byte) (*http.Request, error) {
+func prepareDot(r *http.Request, from provider.Protocol, model string, body []byte) (*http.Request, error) {
 	cfg, err := dotbridge.LoadConfig()
 	if err != nil {
 		return r, err
@@ -101,7 +101,7 @@ func prepareDot(r *http.Request, from provider.Protocol, body []byte) (*http.Req
 	if err != nil {
 		return r, err
 	}
-	sub, err := dotSubmission(from, body, id, dotSessionID(r, id))
+	sub, err := dotSubmission(from, body, dotModeOfModel(model), id, dotSessionID(r, id))
 	if err != nil {
 		return r, err
 	}
@@ -124,7 +124,7 @@ func prepareDot(r *http.Request, from provider.Protocol, body []byte) (*http.Req
 			if session := sessionOf(r.Header); session != "" {
 				oldSession = "sess-" + dotHashParts(oldScope, session)
 			}
-			legacySub, err := dotSubmission(from, body, oldID, oldSession)
+			legacySub, err := dotSubmission(from, body, dotbridge.ModeAnswer, oldID, oldSession)
 			if err != nil {
 				return r, err
 			}
@@ -144,6 +144,7 @@ func prepareDot(r *http.Request, from provider.Protocol, body []byte) (*http.Req
 		return r, err
 	}
 	ctx := context.WithValue(withDotAttempt(r.Context(), a), dotSubmissionKey{}, sub)
+	ctx = context.WithValue(ctx, dotProgressKey{}, new(dotbridge.Job))
 	return r.WithContext(ctx), nil
 }
 
@@ -161,11 +162,19 @@ func (s *Server) serveDot(w http.ResponseWriter, r *http.Request, from provider.
 	if err != nil || identity == "" || identity != conn.PairingIdentity() || identity != dotbridge.PairingIdentity(cfg) {
 		return writeError(w, from, 503, "dot bridge configuration unavailable"), "dot bridge configuration unavailable"
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(cfg.AnswerWaitSeconds)*time.Second)
+	wait := cfg.AnswerWaitSeconds
+	if sub.Mode == dotbridge.ModeTask {
+		wait = cfg.TaskWaitSeconds
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(wait)*time.Second)
 	defer cancel()
 	// A held provider/catalog snapshot is not authority to start new work.
 	st, statusErr := conn.Status(ctx)
-	if statusErr != nil || !st.Authorized(time.Now()) || !st.Capabilities.Text {
+	cap := dotbridge.CapabilityText
+	if sub.Mode == dotbridge.ModeTask {
+		cap = dotbridge.CapabilityTasks
+	}
+	if statusErr != nil || !st.Authorized(time.Now()) || (cap == dotbridge.CapabilityTasks && !st.Capabilities.Tasks) || (cap == dotbridge.CapabilityText && !st.Capabilities.Text) {
 		return writeError(w, from, 503, "dot bridge is not ready"), "dot bridge is not ready"
 	}
 	call.To = from // Queue attempts belong in the ledger even without an answer.
@@ -183,6 +192,9 @@ func (s *Server) serveDot(w http.ResponseWriter, r *http.Request, from provider.
 			return writeError(w, from, 409, "dot request identity conflicts with its saved content"), "dot request identity conflict"
 		}
 		return writeError(w, from, 503, "dot bridge enqueue failed"), "dot bridge enqueue failed"
+	}
+	if progress, ok := r.Context().Value(dotProgressKey{}).(*dotbridge.Job); ok {
+		*progress = job
 	}
 	poll := time.NewTicker(2 * time.Second)
 	defer poll.Stop()
@@ -218,6 +230,11 @@ func (s *Server) serveDot(w http.ResponseWriter, r *http.Request, from provider.
 			// ByRequest validates identity and the full receipt on every read. Get
 			// currently returns an unchecked DTO, so it cannot authenticate an answer.
 			job, err = conn.ByRequest(ctx, a)
+			if err == nil {
+				if progress, ok := r.Context().Value(dotProgressKey{}).(*dotbridge.Job); ok {
+					*progress = job
+				}
+			}
 			if err != nil {
 				return 409, dotErrUnknown
 			}
@@ -238,7 +255,13 @@ func dotJobError(job dotbridge.Job) string {
 	case dotbridge.StateCancelRequested:
 		return dotErrPending
 	case dotbridge.StateCompleted:
-		if job.CancelRequested || job.Result == nil || job.Result.Cancelled || job.Result.ErrorCode != "" || job.ErrorCode != "" || !utf8.ValidString(job.Result.Text) || strings.TrimSpace(job.Result.Text) == "" {
+		if job.CancelRequested || job.Result == nil || job.Result.Cancelled || job.Result.ErrorCode != "" || job.ErrorCode != "" {
+			return dotErrFailed
+		}
+		if err := dotbridge.ValidateResult(job.Result); err != nil {
+			return dotErrFailed
+		}
+		if strings.TrimSpace(job.Result.Text) == "" && len(job.Result.Artifacts) == 0 {
 			return dotErrFailed
 		}
 		return ""
@@ -252,8 +275,15 @@ func dotFailureMessage(snap dotbridge.Snapshot, code string) string {
 
 // dotFailure is called only after the hold writer's watch has joined. It
 // writes structured errors directly, avoiding encoders that emit a fake start.
-func dotFailure(w http.ResponseWriter, kept *keptAlive, proto provider.Protocol, snap dotbridge.Snapshot, code string) int {
+func dotFailure(w http.ResponseWriter, kept *keptAlive, proto provider.Protocol, snap dotbridge.Snapshot, code string, progress ...dotbridge.Job) int {
 	fields := map[string]any{"code": code, "type": "api_error", "message": dotFailureMessage(snap, code), "request_id": snap.RequestID, "automatic_redispatch": false, "stable_request_id_required_for_client_retries": true}
+	job := dotbridge.Job{RequestID: snap.RequestID, JobID: snap.JobID, Mode: snap.Mode, State: "acceptance_unknown"}
+	if len(progress) > 0 && progress[0].JobID != "" {
+		job = progress[0]
+	}
+	for key, value := range dotMetadata(job) {
+		fields[key] = value
+	}
 	if snap.JobID != "" {
 		fields["job_id"] = snap.JobID
 	}

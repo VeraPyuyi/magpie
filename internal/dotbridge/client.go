@@ -408,6 +408,14 @@ func (c *Connection) Status(ctx context.Context) (Status, error) {
 	return st, nil
 }
 
+// Capability names the Dot bridge mode a caller needs.
+type Capability string
+
+const (
+	CapabilityText  Capability = "text"
+	CapabilityTasks Capability = "tasks"
+)
+
 // CachedReady reports whether a recently validated status cache is ready.
 var readyCache struct {
 	sync.Mutex
@@ -427,7 +435,7 @@ func invalidateReady() {
 	readyCache.generation++
 }
 
-func CachedReady(now time.Time) bool {
+func CachedReady(now time.Time, cap Capability) bool {
 	cfg, err := LoadConfig()
 	if err != nil || !cfg.Enabled {
 		return false
@@ -442,5 +450,13 @@ func CachedReady(now time.Time) bool {
 	age := now.Sub(readyCache.at)
 	// Cached authorization is bounded independently of the server's lease.
 	// Every other subscription state fails closed.
-	return age >= 0 && age <= 10*time.Second && s.Authorized(now) && s.Capabilities.Text
+	if age < 0 || age > 10*time.Second || !s.Authorized(now) {
+		return false
+	}
+	switch cap {
+	case CapabilityTasks:
+		return s.Capabilities.Tasks
+	default:
+		return s.Capabilities.Text
+	}
 }

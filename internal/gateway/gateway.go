@@ -31,6 +31,7 @@ import (
 
 	"github.com/yetone/magpie/internal/access"
 	"github.com/yetone/magpie/internal/awake"
+	"github.com/yetone/magpie/internal/dotbridge"
 	"github.com/yetone/magpie/internal/gwbudget"
 	"github.com/yetone/magpie/internal/gwmw"
 	"github.com/yetone/magpie/internal/gwtool"
@@ -636,6 +637,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/magpie/route", s.sessionRoute)
 	mux.HandleFunc("GET /v1/magpie/concurrency", s.concurrency)
 	mux.HandleFunc("GET /v1/magpie/limit", s.keyLimit)
+	mux.HandleFunc("GET /v1/magpie/dot/requests/{id}", s.dotRequest)
 	// a heap profile of this process, for magpie heap (loopback only)
 	mux.HandleFunc("GET "+HeapPath, s.heapProfile)
 	// a CPU profile of this process over some seconds, for magpie cpu
@@ -907,7 +909,7 @@ func cursorLocalModel(m map[string]any, e provider.Entry) {
 		types = []string{"anthropic_messages"}
 	}
 	m["api_types"] = types
-	c := map[string]any{"supports_tool_use": true, "supports_streaming": true, "output_modalities": []string{"text"},
+	c := map[string]any{"supports_tool_use": provider.CallerToolsSupported(e), "supports_streaming": true, "output_modalities": []string{"text"},
 		"supports_reasoning": e.Reasoning || len(e.Efforts) > 0}
 	if len(e.Efforts) > 0 {
 		c["reasoning_effort"] = e.Efforts
@@ -2604,7 +2606,14 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		// tier rewrites, before a Dot attempt can queue or submit anything.
 		var dotRequest *http.Request
 		if c.p.IsDot() {
-			recheck, err := dotRequirementsOf(from, attemptBody)
+			recheck, err := dotRequirementsFor(from, attemptBody, c.model)
+			if original, ok := r.Context().Value(dotAdmissionKey{}).(dotAdmission); ok {
+				verdict := original.answer
+				if c.model == provider.DotTaskModel {
+					verdict = original.task
+				}
+				recheck.Unsupported = append(recheck.Unsupported, verdict.Unsupported...)
+			}
 			if err != nil {
 				recheck.Unsupported = append(recheck.Unsupported, err.Error())
 			}
@@ -2617,7 +2626,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 				skipped = append(skipped, c.label()+": unsupported for dot")
 				continue
 			}
-			dotRequest, err = prepareDot(r, from, attemptBody)
+			dotRequest, err = prepareDot(r, from, c.model, attemptBody)
 			if err != nil {
 				call.Status, call.Error = 400, err.Error()
 				failTo(w, kept, from, call.Status, call.Error)
@@ -2865,7 +2874,12 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 					}
 					try.DotError = code
 					try.Fail = failOther
-					call.Status = dotFailure(w, kept, from, snap, code)
+					progress, _ := dotRequest.Context().Value(dotProgressKey{}).(*dotbridge.Job)
+					job := dotbridge.Job{}
+					if progress != nil {
+						job = *progress
+					}
+					call.Status = dotFailure(w, kept, from, snap, code, job)
 					if kept.sent {
 						call.Status = http.StatusOK
 					}

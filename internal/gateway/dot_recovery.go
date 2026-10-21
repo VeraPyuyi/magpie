@@ -14,7 +14,21 @@ type dotOriginalKey struct{}
 
 // bindDotOriginal runs at the decoded body-read boundary before request rewrites,
 // hooks or middleware. Exact bytes are hashed; no original content is persisted.
+type dotAdmissionKey struct{}
+type dotAdmission struct{ answer, task dotRequirements }
+
 func bindDotOriginal(r *http.Request, from provider.Protocol, body []byte) {
+	if r.Context().Value(dotAdmissionKey{}) == nil {
+		answer, ae := dotRequirementsFor(from, body, provider.DotTextModel)
+		task, te := dotRequirementsFor(from, body, provider.DotTaskModel)
+		if ae != nil {
+			answer.Unsupported = append(answer.Unsupported, ae.Error())
+		}
+		if te != nil {
+			task.Unsupported = append(task.Unsupported, te.Error())
+		}
+		*r = *r.WithContext(context.WithValue(r.Context(), dotAdmissionKey{}, dotAdmission{answer, task}))
+	}
 	if r.Header.Get(dotRequestHeader) == "" {
 		return
 	}
@@ -85,7 +99,7 @@ func (s *Server) recoverDotOwner(w http.ResponseWriter, r *http.Request, from pr
 	fail := func(code string) bool { dotFailure(w, nil, from, owner.Snapshot, code); return true }
 	// Gateway authentication has already run. Recheck current model restrictions
 	// before returning a result; a key's identity alone is not current authority.
-	if who, held := keyHolds(r); held && !who.Allows("dot/text") {
+	if who, held := keyHolds(r); held && !who.Allows(dotModelID(owner.Mode)) {
 		writeError(w, from, 403, "Dot recovery is outside the gateway key's models")
 		return true
 	}
@@ -99,7 +113,7 @@ func (s *Server) recoverDotOwner(w http.ResponseWriter, r *http.Request, from pr
 	if owner.OriginalFingerprint != dotOriginalOf(r) {
 		return fail("dot_original_request_conflict")
 	}
-	sub, err := dotSubmission(from, body, owner.RequestID, owner.SessionID)
+	sub, err := dotSubmission(from, body, owner.Mode, owner.RequestID, owner.SessionID)
 	if err != nil {
 		return fail("dot_original_request_required")
 	}
@@ -123,10 +137,12 @@ func (s *Server) recoverDotOwner(w http.ResponseWriter, r *http.Request, from pr
 		return fail(dotErrUnknown)
 	}
 	if code := dotJobError(job); code != "" {
-		return fail(code)
+		dotFailure(w, nil, from, owner.Snapshot, code, job)
+		return true
 	}
 	if job.State != dotbridge.StateCompleted {
-		return fail(dotErrPending)
+		dotFailure(w, nil, from, owner.Snapshot, dotErrPending, job)
+		return true
 	}
 	answer, err := dotAnswer(from, job)
 	if err != nil {

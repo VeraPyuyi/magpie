@@ -30,7 +30,7 @@ func TestDotLegacyStableHeaderNeverReposts(t *testing.T) {
 			oldID := "req-" + dotHashParts(oldScope, "retry-header")
 			oldSession := "sess-" + dotHashParts(oldScope, oldID)
 			body := []byte(`{"model":"dot/text","messages":[{"role":"user","content":"original"}]}`)
-			sub, err := dotSubmission(provider.Chat, body, oldID, oldSession)
+			sub, err := dotSubmission(provider.Chat, body, dotbridge.ModeAnswer, oldID, oldSession)
 			if err != nil {
 				t.Fatal(err)
 			}

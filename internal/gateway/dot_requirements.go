@@ -12,7 +12,7 @@ import (
 	"github.com/yetone/magpie/internal/provider"
 )
 
-// dotRequirements lists why a request cannot use the Dot text bridge.
+// dotRequirements lists why a request cannot use the Dot bridge.
 type dotRequirements struct {
 	Unsupported []string
 }
@@ -98,7 +98,7 @@ func dotChatShape(raw map[string]json.RawMessage, out *dotRequirements) error {
 		out.Unsupported = append(out.Unsupported, "messages")
 		return nil
 	}
-	if err := dotCheckSubmission(dotbridge.ModeAnswer, msgs, ""); err != nil {
+	if err := dotRejectLocalEnvironment(msgs); err != nil {
 		out.Unsupported = append(out.Unsupported, err.Error())
 	}
 	return nil
@@ -119,7 +119,7 @@ func dotResponsesShape(raw map[string]json.RawMessage, out *dotRequirements) err
 		out.Unsupported = append(out.Unsupported, "input")
 		return nil
 	}
-	if err := dotCheckSubmission(dotbridge.ModeAnswer, msgs, ""); err != nil {
+	if err := dotRejectLocalEnvironment(msgs); err != nil {
 		out.Unsupported = append(out.Unsupported, err.Error())
 	}
 	return nil
@@ -267,6 +267,42 @@ func dotTextContent(raw json.RawMessage) (string, error) {
 	return b.String(), nil
 }
 
+func dotModeOfModel(model string) string {
+	if model == provider.DotTaskModel {
+		return dotbridge.ModeTask
+	}
+	return dotbridge.ModeAnswer
+}
+
+func dotModelID(mode string) string {
+	if mode == dotbridge.ModeTask {
+		return provider.DotID + "/" + provider.DotTaskModel
+	}
+	return provider.DotID + "/" + provider.DotTextModel
+}
+
+func dotRejectLocalEnvironment(msgs []dotbridge.Message) error {
+	for _, m := range msgs {
+		if workDirIn(m.Content, "") != "" {
+			return fmt.Errorf("local environment")
+		}
+	}
+	return nil
+}
+
+func dotTaskFromMessages(msgs []dotbridge.Message) (string, []dotbridge.Message, error) {
+	if len(msgs) == 0 {
+		return "", nil, fmt.Errorf("messages")
+	}
+	end := len(msgs)
+	if end == 0 || msgs[end-1].Role != "user" || strings.TrimSpace(msgs[end-1].Content) == "" {
+		return "", nil, fmt.Errorf("task prompt")
+	}
+	task := msgs[end-1].Content
+	context := append([]dotbridge.Message(nil), msgs[:end-1]...)
+	return task, context, nil
+}
+
 func dotCheckSubmission(mode string, msgs []dotbridge.Message, task string) error {
 	if len(msgs) > 32 {
 		return fmt.Errorf("too many messages")
@@ -294,7 +330,18 @@ func dotCheckSubmission(mode string, msgs []dotbridge.Message, task string) erro
 	return nil
 }
 
-func dotSubmission(from provider.Protocol, body []byte, requestID, sessionID string) (dotbridge.Submission, error) {
+func dotRequirementsFor(from provider.Protocol, body []byte, model string) (dotRequirements, error) {
+	req, err := dotRequirementsOf(from, body)
+	if err != nil || !req.ok() {
+		return req, err
+	}
+	if _, err := dotSubmission(from, body, dotModeOfModel(model), "req-dot-preflight", "sess-dot-preflight"); err != nil {
+		req.Unsupported = append(req.Unsupported, strings.TrimPrefix(err.Error(), "unsupported for dot: "))
+	}
+	return req, nil
+}
+
+func dotSubmission(from provider.Protocol, body []byte, mode, requestID, sessionID string) (dotbridge.Submission, error) {
 	req, err := dotRequirementsOf(from, body)
 	if err != nil {
 		return dotbridge.Submission{}, err
@@ -315,11 +362,22 @@ func dotSubmission(from provider.Protocol, body []byte, requestID, sessionID str
 	if err != nil {
 		return dotbridge.Submission{}, err
 	}
+	task := ""
+	if mode == dotbridge.ModeTask {
+		task, msgs, err = dotTaskFromMessages(msgs)
+		if err != nil {
+			return dotbridge.Submission{}, fmt.Errorf("unsupported for dot: %s", err.Error())
+		}
+	}
+	if err := dotCheckSubmission(mode, msgs, task); err != nil {
+		return dotbridge.Submission{}, fmt.Errorf("unsupported for dot: %s", err.Error())
+	}
 	return dotbridge.Submission{
 		RequestID: requestID,
-		Mode:      dotbridge.ModeAnswer,
+		Mode:      mode,
 		SessionID: sessionID,
 		Messages:  msgs,
+		Task:      task,
 	}, nil
 }
 

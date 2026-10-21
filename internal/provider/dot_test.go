@@ -32,7 +32,7 @@ func enableDotBridgeForTest(t *testing.T) *httptest.Server {
 			"version": 1, "enabled": true, "paired": true, "ready": true, "code": "ready",
 			"verified_at": now.Add(-time.Second), "expires_at": now.Add(time.Minute),
 			"subscription": map[string]any{"state": "active", "expires_at": now.Add(5 * time.Minute)},
-			"capabilities": map[string]bool{"text": true, "tasks": false},
+			"capabilities": map[string]bool{"text": true, "tasks": true},
 		})
 	}))
 	t.Cleanup(srv.Close)
@@ -161,7 +161,7 @@ func TestDotModelAllowList(t *testing.T) {
 	if dot == nil {
 		t.Fatal("ready dot missing from All")
 	}
-	if got := dot.Exposed(); len(got) != 1 || got[0].ID != DotTextModel {
+	if got := dot.Exposed(); len(got) != 2 {
 		t.Fatalf("exposed=%v", got)
 	}
 	if _, _, ok := Resolve(DotID + "/" + DotTextModel); !ok {

@@ -336,7 +336,7 @@ func TestGroupDotReadiness(t *testing.T) {
 					case "unpaired":
 						store.token = ""
 					}
-					if dotbridge.CachedReady(time.Now()) {
+					if dotbridge.CachedReady(time.Now(), dotbridge.CapabilityText) {
 						t.Fatal("fixture must start with cold readiness")
 					}
 					ref := "Dot E2E Validation"

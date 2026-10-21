@@ -279,7 +279,7 @@ func TestDotReviewConcurrentHeader(t *testing.T) {
 		if proto == provider.Responses {
 			body = []byte(`{"model":"dot/text","stream":true,"input":"hi"}`)
 		}
-		r, err := prepareDot(httptest.NewRequest("POST", "/v1/chat/completions", nil), proto, body)
+		r, err := prepareDot(httptest.NewRequest("POST", "/v1/chat/completions", nil), proto, provider.DotTextModel, body)
 		if err != nil {
 			t.Fatal(err)
 		}

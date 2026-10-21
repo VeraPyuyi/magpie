@@ -44,7 +44,7 @@ func (h *dotBridgeHarness) serve() *httptest.Server {
 			if h.expired.Load() {
 				now = now.Add(-time.Hour)
 			}
-			json.NewEncoder(w).Encode(map[string]any{"version": 1, "enabled": true, "paired": true, "ready": !h.unready.Load(), "code": "probe_required", "verified_at": now.Add(-time.Second), "expires_at": now.Add(time.Minute), "subscription": map[string]any{"state": "active", "expires_at": now.Add(time.Minute)}, "capabilities": map[string]bool{"text": true}})
+			json.NewEncoder(w).Encode(map[string]any{"version": 1, "enabled": true, "paired": true, "ready": !h.unready.Load(), "code": "probe_required", "verified_at": now.Add(-time.Second), "expires_at": now.Add(time.Minute), "subscription": map[string]any{"state": "active", "expires_at": now.Add(time.Minute)}, "capabilities": map[string]bool{"text": true, "tasks": true}})
 		case r.Method == "POST" && r.URL.Path == "/dot-bridge/v1/jobs":
 			h.posts.Add(1)
 			if h.onSubmit != nil {

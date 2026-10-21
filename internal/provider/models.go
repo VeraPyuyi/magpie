@@ -2540,7 +2540,7 @@ func resolveIn(entries []Entry, id string) (Provider, string, bool) {
 		// the providers a request holds (All): an agent's value of a
 		// model not listed lands here
 		if p, err := findIn(All(), pid); err == nil && p.On() && !p.ServesNone() {
-			if p.IsDot() && model != DotTextModel {
+			if p.IsDot() && dotProbeRequired(model) != "" {
 				return Provider{}, "", false
 			}
 			return *p, model, true

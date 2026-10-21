@@ -21,6 +21,9 @@ const (
 	defaultAnswerWait = 120
 	minAnswerWait     = 1
 	maxAnswerWait     = 600
+	defaultTaskWait   = 600
+	minTaskWait       = 1
+	maxTaskWait       = 3600
 	defaultCallBudget = 10 * time.Second
 )
 
@@ -32,6 +35,7 @@ type Config struct {
 	PairingGeneration string `json:"pairing_generation,omitempty"`
 	ReadinessRevision string `json:"readiness_revision,omitempty"`
 	AnswerWaitSeconds int    `json:"answer_wait_seconds"`
+	TaskWaitSeconds   int    `json:"task_wait_seconds"`
 }
 
 func configPath() string {
@@ -42,11 +46,17 @@ func normalizeConfig(cfg Config) Config {
 	if cfg.AnswerWaitSeconds == 0 {
 		cfg.AnswerWaitSeconds = defaultAnswerWait
 	}
+	if cfg.TaskWaitSeconds == 0 {
+		cfg.TaskWaitSeconds = defaultTaskWait
+	}
 	return cfg
 }
 
 func validateConfig(cfg Config) error {
 	if cfg.AnswerWaitSeconds < minAnswerWait || cfg.AnswerWaitSeconds > maxAnswerWait {
+		return errInvalidConfig
+	}
+	if cfg.TaskWaitSeconds < minTaskWait || cfg.TaskWaitSeconds > maxTaskWait {
 		return errInvalidConfig
 	}
 	if cfg.Enabled {

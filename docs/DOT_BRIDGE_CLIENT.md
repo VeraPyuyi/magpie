@@ -28,7 +28,7 @@ original-ID recovery and cannot authorize an automatic stable-header replay.
 ## Configuration
 
 - File: `settings.Dir()/dot-bridge.json`
-- Fields: `enabled`, `address`, `credential` (pairing reference only), `pairing_generation`, `readiness_revision`, `answer_wait_seconds` (default 120, range 1..600)
+- Fields: `enabled`, `address`, `credential` (pairing reference only), `pairing_generation`, `readiness_revision`, `answer_wait_seconds` (default 120, range 1..600), `task_wait_seconds` (default 600, range 1..3600)
 - Pairing generation changes on replacement; off/re-enable preserves it and pending request identities. A separate readiness revision invalidates cached proof across processes.
 - `BoundPairingSnapshot` captures configuration and connection together. Journal scopes include the bound `PairingIdentity`, derived from canonical address, credential reference and generation.
 - Pairing secret: keyring service `Magpie/DotBridge`, account = SHA-256 of absolute config directory + pairing reference
@@ -66,7 +66,32 @@ Local validation follows the queue: at most 32 messages, valid UTF-8, supported 
 
 ## Readiness
 
-Authenticated status includes subscription state/expiry and text/task capabilities. Only a bound paired connection can publish in-memory readiness after credential revalidation and a version-1 response. Publication and consumption require the current pairing identity and readiness revision, so an obsolete connection cannot make a replacement pairing ready; errors invalidate its cache. `CachedReady(now)` requires enabled, paired, ready, text capability, active subscription, a nonfuture verification within ten minutes, cache age at most ten seconds, and unexpired proof and subscription. A later refresh invalidates an earlier in-flight refresh. There is no readiness setter or persisted synthetic proof. Missing subscription expiry fails closed.
+Authenticated status includes subscription state/expiry and text/task capabilities. Only a bound paired connection can publish in-memory readiness after credential revalidation and a version-1 response. Publication and consumption require the current pairing identity and readiness revision, so an obsolete connection cannot make a replacement pairing ready; errors invalidate its cache. `CachedReady(now, capability)` requires enabled, paired, ready, the requested text or tasks capability, active subscription, nonfuture verification, cache age at most ten seconds, and unexpired proof and subscription. Each routed model requires its own capability. A later refresh invalidates an earlier in-flight refresh. There is no readiness setter or persisted synthetic proof. Missing subscription expiry fails closed.
+
+## Routed task contract
+
+`dot/task` uses the final nonblank user turn as Task and preceding explicit
+messages as context; `dot/text` retains its original answer digest. Original
+and final request admission reject caller tool definitions/results, developer
+messages, and known caller environment formats. Dot may use its own cloud
+computer, browser and execution tools. Materials must be explicitly supplied or
+accessible to the Dot account; local repositories are not implicitly synced.
+
+Validated results have a combined 256 KiB budget including text, error code,
+artifact URLs and labels; at most 16 artifacts, 256-byte labels and 2048-byte
+URLs. URLs require valid UTF-8, HTTPS without credentials, valid ports, canonical
+public literal IPs or public-shaped DNS hosts under the producer's policy.
+Numeric host aliases, local suffixes, mapped/scoped IPs and special IP ranges
+are rejected without DNS or URL fetches. Markdown links escape labels and
+preserve the validated destination.
+
+`magpie_dot` metadata on Chat messages or Responses objects survives streaming.
+Pending errors include actual job progress, mode, bounded summary, request/job
+IDs and a recovery URL. `GET /v1/magpie/dot/requests/{internal_request_id}`
+accepts that exact ID, authenticates caller and agent scope and mode permission,
+and only resumes through the original pairing. Group-only restricted keys fail
+closed. Acceptance state and job progress remain separate; reservation or
+uncertain acceptance prevents automatic fallback even on a non-202 response.
 
 ## Local retention and backup
 

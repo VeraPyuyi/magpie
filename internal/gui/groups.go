@@ -245,8 +245,13 @@ func groupsState() groupsJSON {
 			out.Models = append(out.Models, servedRef(e))
 		}
 	}
-	if p, ok := provider.DotConfigurationOption(); ok && !slices.ContainsFunc(out.Models, func(m modelRef) bool { return m.ID == "dot/text" }) {
-		out.Models = append(out.Models, modelRef{ID: "dot/text", Name: "Dot text", Provider: p.ID, PName: p.Name, Icon: p.Icon, Unavailable: true, Reason: "Dot needs readiness before new requests"})
+	if p, ok := provider.DotConfigurationOption(); ok {
+		for _, ref := range []struct{ ID, Name string }{{"dot/text", "Dot text"}, {"dot/task", "Dot task"}} {
+			if slices.ContainsFunc(out.Models, func(m modelRef) bool { return m.ID == ref.ID }) {
+				continue
+			}
+			out.Models = append(out.Models, modelRef{ID: ref.ID, Name: ref.Name, Provider: p.ID, PName: p.Name, Icon: p.Icon, Unavailable: true, Reason: "Dot needs readiness before new requests"})
+		}
 	}
 	// every provider's models read once for the groups, not once a group
 	// (#1762)

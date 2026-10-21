@@ -9,7 +9,7 @@ import (
 )
 
 func TestDotAnswerChatOmitsUsage(t *testing.T) {
-	b, err := dotAnswer(provider.Chat, dotbridge.Job{JobID: "job-1", Result: &dotbridge.Result{Text: "hello"}})
+	b, err := dotAnswer(provider.Chat, dotbridge.Job{Mode: dotbridge.ModeAnswer, JobID: "job-1", Result: &dotbridge.Result{Text: "hello"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ func TestDotAnswerChatOmitsUsage(t *testing.T) {
 }
 
 func TestDotAnswerResponsesOmitsUsage(t *testing.T) {
-	b, err := dotAnswer(provider.Responses, dotbridge.Job{JobID: "job-1", Result: &dotbridge.Result{Text: "hello"}})
+	b, err := dotAnswer(provider.Responses, dotbridge.Job{Mode: dotbridge.ModeAnswer, JobID: "job-1", Result: &dotbridge.Result{Text: "hello"}})
 	if err != nil {
 		t.Fatal(err)
 	}

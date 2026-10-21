@@ -11,6 +11,7 @@ const (
 	DotID        = "dot"
 	DotName      = "DotControl"
 	DotTextModel = "text"
+	DotTaskModel = "task"
 )
 
 // IsDot reports whether p is the built-in DotControl bridge provider.
@@ -55,7 +56,8 @@ func dotMachineEnabled() bool {
 	if _, err := dotbridge.PairedConnection(); err != nil {
 		return false
 	}
-	return dotbridge.CachedReady(time.Now())
+	now := time.Now()
+	return dotbridge.CachedReady(now, dotbridge.CapabilityText) || dotbridge.CachedReady(now, dotbridge.CapabilityTasks)
 }
 
 func dotStoredCollision() bool {
@@ -68,20 +70,50 @@ func dotStoredCollision() bool {
 	return false
 }
 
+// CallerToolsSupported requires every executable group member to accept the
+// caller's tool loop; a group's first provider is not its capability contract.
+func CallerToolsSupported(e Entry) bool {
+	if e.Group == "" {
+		return !e.Provider.IsDot()
+	}
+	_, members, ok := FindGroup(e.ID)
+	if !ok || len(members) == 0 {
+		return false
+	}
+	for _, m := range members {
+		if m.Provider.IsDot() {
+			return false
+		}
+	}
+	return true
+}
+
 func dotModels() []catalog.Model {
-	return []catalog.Model{{
-		ID:       DotTextModel,
-		Name:     "Dot text",
-		Provider: DotID,
-	}}
+	var models []catalog.Model
+	for _, m := range []catalog.Model{{ID: DotTextModel, Name: "Dot text", Provider: DotID}, {ID: DotTaskModel, Name: "Dot task", Provider: DotID}} {
+		if dotProbeRequired(m.ID) == "" {
+			models = append(models, m)
+		}
+	}
+	return models
 }
 
 func dotProbeRequired(model string) string {
-	if model != DotTextModel {
-		return "dot bridge serves only dot/text"
+	cap := dotbridge.CapabilityText
+	if model == DotTaskModel {
+		cap = dotbridge.CapabilityTasks
+	} else if model != DotTextModel {
+		return "dot bridge serves only dot/text and dot/task"
 	}
-	if !dotMachineEnabled() {
+	cfg, err := dotbridge.LoadConfig()
+	if err != nil || !cfg.Enabled {
 		return "dot bridge is not ready; run magpie dot status and complete pairing/probe"
+	}
+	if _, err := dotbridge.PairedConnection(); err != nil {
+		return "dot bridge is not ready; run magpie dot status and complete pairing/probe"
+	}
+	if !dotbridge.CachedReady(time.Now(), cap) {
+		return "dot bridge is not ready for " + model + "; run magpie dot status and complete pairing/probe"
 	}
 	return ""
 }

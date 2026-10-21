@@ -8,7 +8,7 @@ locally disabled and unpaired remain distinct. An authenticated active grant
 whose refresh failed stays usable until its actual expiry and shows a renewal
 warning. ChatGPT owns `events/subscribe` renewal; Magpie never renews a grant.
 
-The routing-group model picker also always offers `dot/text` for configuration
+The routing-group model picker also always offers `dot/text` and `dot/task` for configuration
 unless a stored endpoint owns the `dot` ID. `/api/groups.models` marks this
 extra display entry `unavailable` with a reason; it is not added to
 `provider.Served`. Saving it does not enable execution or advertise it to agents.

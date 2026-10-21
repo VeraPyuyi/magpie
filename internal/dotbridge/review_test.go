@@ -89,26 +89,30 @@ func TestDotReviewReadyCache(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	cfg := Config{Address: strings.TrimPrefix(srv.URL, "http://"), Credential: "ready-fixture"}
-	if err := SavePairing(cfg, "paired"); err != nil { t.Fatal(err) }
+	if err := SavePairing(cfg, "paired"); err != nil {
+		t.Fatal(err)
+	}
 	c, err := PairedConnection()
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := c.Status(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if !CachedReady(time.Now()) {
+	if !CachedReady(time.Now(), CapabilityText) {
 		t.Fatal("verified authenticated status did not populate cache")
 	}
-	if CachedReady(now.Add(6 * time.Second)) {
+	if CachedReady(now.Add(6*time.Second), CapabilityText) {
 		t.Fatal("subscription expiry ignored")
 	}
-	if CachedReady(now.Add(-time.Hour)) {
+	if CachedReady(now.Add(-time.Hour), CapabilityText) {
 		t.Fatal("future cache accepted")
 	}
 	status["ready"] = false
 	if _, err := c.Status(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if CachedReady(time.Now()) {
+	if CachedReady(time.Now(), CapabilityText) {
 		t.Fatal("unready status did not invalidate cache")
 	}
 }

@@ -285,7 +285,7 @@ func memberResolver(keep []string) func(string) (string, error) {
 			}
 			return "", fmt.Errorf("magpie has no group %q (magpie groups lists them)", gid)
 		}
-		if id == "dot/text" {
+		if id == "dot/text" || id == "dot/task" {
 			if _, ok := provider.DotConfigurationOption(); ok {
 				return id, nil
 			}

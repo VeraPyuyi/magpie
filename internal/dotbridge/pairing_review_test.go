@@ -162,7 +162,7 @@ func TestDotReviewExternalOffCycleInvalidatesProofOnly(t *testing.T) {
 	if err := edit.WriteAtomic(configPath(), raw); err != nil {
 		t.Fatal(err)
 	}
-	if CachedReady(time.Now()) {
+	if CachedReady(time.Now(), CapabilityText) {
 		t.Fatal("external off cycle restored stale proof")
 	}
 	if PairingIdentity(cfg) != c.PairingIdentity() {

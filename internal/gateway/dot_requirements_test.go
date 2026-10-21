@@ -123,7 +123,7 @@ func TestDotRequirementsDeveloperRole(t *testing.T) {
 
 func TestDotSubmissionPreservesRoles(t *testing.T) {
 	body := `{"model":"dot/text","messages":[{"role":"system","content":"s"},{"role":"user","content":"u"},{"role":"assistant","content":"a"}]}`
-	sub, err := dotSubmission(provider.Chat, []byte(body), "req-1", "sess-1")
+	sub, err := dotSubmission(provider.Chat, []byte(body), dotbridge.ModeAnswer, "req-1", "sess-1")
 	if err != nil {
 		t.Fatal(err)
 	}

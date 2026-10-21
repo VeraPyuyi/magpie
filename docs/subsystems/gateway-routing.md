@@ -73,8 +73,39 @@ recorded as a prediction failure (`noPrediction`).
 
 ## Dot text capability preflight
 
-The machine-local DotControl provider accepts text on Chat Completions and
-Responses. [`dot_requirements.go`](../../internal/gateway/dot_requirements.go)
+The machine-local DotControl provider accepts `dot/text` answer mode and
+`dot/task` durable task mode on Chat Completions and Responses. Task mode
+converts the final nonblank user turn into a Dot task with preceding explicit
+messages as context, rejects caller local-environment markers, and waits up to
+`task_wait_seconds` (default 600, bounded 1..3600) independently of answer
+wait. Task results may be text plus safe HTTPS artifact links or artifacts
+only; the gateway never fetches artifact URLs.
+
+`GET /v1/magpie/dot/requests/{id}` recovers an accepted request in the
+caller's agent scope with the same auth stack and mode permission as stable-header
+recovery. `{id}` is the exact internal `request_id` returned in metadata, for
+both random and stable-header requests. It performs only Resume GET against
+the original pairing; it never reserves, POSTs, or redispatches. Group-only
+restricted keys fail closed because immutable group authorization is not retained.
+
+Admission retains per-mode original capability verdicts at the decoded body
+boundary before request hooks and middleware, even without stable headers.
+Removing caller tools, developer turns or known local environment formats cannot
+make them eligible later. The final candidate body is checked again. Dot can
+use its own cloud browser, computer and execution tools for the delegated task;
+caller tool definitions/results and the caller's local tool loop are unsupported.
+Context materials must be explicitly supplied or accessible in the Dot account;
+Magpie does not assume a local repository is synchronized there.
+
+Completed replies carry `magpie_dot` on the Chat assistant message or Responses
+top level, preserved in SSE. It contains mode, actual job state, bounded summary,
+request/job IDs, `status_url`, and validated artifacts. Pending errors expose the
+same progress fields, distinguishing `waiting_user` from `running`. Acceptance
+journal state remains separate from job progress; unknown acceptance never
+invents progress. Artifact destinations use the producer's public-host policy
+without DNS or HTTP fetches; labels and link destinations are escaped for Markdown.
+Direct Dot and mixed Dot groups do not promise caller tools in Cursor's catalog
+and are omitted from Codex's catalog, whose default metadata enables local tools. [`dot_requirements.go`](../../internal/gateway/dot_requirements.go)
 checks its wire allowlist only when the resolved single provider or the
 planned candidates include Dot. Other providers retain their existing
 handling of tools, images, developer messages and Responses function items;
