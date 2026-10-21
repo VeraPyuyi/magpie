@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/yetone/magpie/internal/agent"
 	"github.com/yetone/magpie/internal/catalog"
+	"github.com/yetone/magpie/internal/dotbridge"
 	"github.com/yetone/magpie/internal/provider"
 )
 
@@ -234,6 +236,11 @@ func inGroup(members []string) func(string) bool {
 // group has already, kept though no provider serves them now (the Routing
 // view keeps them too, skipped).
 func memberResolver(keep []string) func(string) (string, error) {
+	// A short-lived CLI has no gateway readiness poll. Refresh once before
+	// the snapshot; Status authenticates, bounds the call and fails closed.
+	if conn, err := dotbridge.PairedConnection(); err == nil {
+		_, _ = conn.Status(context.Background())
+	}
 	var ids []string
 	byModel := map[string][]string{}
 	for _, e := range provider.Served() {
