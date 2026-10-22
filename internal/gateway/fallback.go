@@ -2468,6 +2468,34 @@ func (h *holdWriter) watch() func() {
 	}
 }
 
+// watchDot keeps a Dot wait alive with SSE comments only. It never arms
+// first-token failover or ends the try early.
+func (h *holdWriter) watchDot() func() {
+	if !h.streams {
+		return func() {}
+	}
+	done, over := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(over)
+		tick := time.NewTicker(watchEvery)
+		defer tick.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-tick.C:
+				h.mu.Lock()
+				h.keepQuiet()
+				h.mu.Unlock()
+			}
+		}
+	}()
+	return func() {
+		close(done)
+		<-over
+	}
+}
+
 // keepQuiet keeps the agent of a stream alive with SSE comments while the
 // vendor says nothing, every keepaliveEvery for up to keepaliveLongest
 // since it last did: a vendor that sent its 200 and response.created, then

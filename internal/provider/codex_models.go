@@ -402,6 +402,7 @@ func CodexListed() []catalog.Model {
 // account's own among them, since that Codex reaches them through magpie's
 // /v1 by magpie's id, not through the ChatGPT backend's list.
 func CodexCatalog(shown []Entry) []catalog.Model {
+	shown = slices.DeleteFunc(slices.Clone(shown), func(e Entry) bool { return !CallerToolsSupported(e) })
 	find := GroupFinder()
 	return codexListed(shown, func(id string) []Member {
 		_, ms, _ := find(id)

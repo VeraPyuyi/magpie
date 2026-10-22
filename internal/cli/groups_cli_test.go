@@ -2,11 +2,16 @@ package cli
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/yetone/magpie/internal/dotbridge"
 	"github.com/yetone/magpie/internal/provider"
 )
 
@@ -261,6 +266,119 @@ func TestGroupAddSetRemove(t *testing.T) {
 	}
 	if _, err := removeGroup("second"); err == nil {
 		t.Fatal("removed twice")
+	}
+}
+
+// Each CLI process starts without a status cache, even when a separate
+// `magpie dot status` has verified the pairing. Group add and set must
+// authenticate readiness before taking their catalog snapshot.
+func TestGroupDotReadiness(t *testing.T) {
+	for _, command := range []string{"add", "set"} {
+		t.Run(command, func(t *testing.T) {
+			for _, state := range []string{"ready", "unready", "no-text", "expired", "inactive", "unavailable", "unauthorized", "bad-version", "disabled", "unpaired"} {
+				t.Run(state, func(t *testing.T) {
+					store := dotSandbox(t)
+					groupsHome(t)
+					if err := provider.SaveGroup(provider.Group{ID: "gh-light", Name: "GH Light", Members: []string{"a/m"}}); err != nil {
+						t.Fatal(err)
+					}
+					if command == "set" {
+						if err := provider.SaveGroup(provider.Group{ID: "dot-e2e-validation", Name: "Dot E2E Validation", Members: []string{"a/only-a"}}); err != nil {
+							t.Fatal(err)
+						}
+					}
+					now := time.Now()
+					status := dotbridge.Status{Version: 1, Enabled: true, Paired: true, Ready: true,
+						VerifiedAt: now.Add(-time.Second), ExpiresAt: now.Add(time.Hour),
+						Subscription: dotbridge.SubscriptionStatus{State: "active", ExpiresAt: now.Add(time.Hour)},
+						Capabilities: dotbridge.Capabilities{Text: true}}
+					switch state {
+					case "unready":
+						status.Ready = false
+					case "no-text":
+						status.Capabilities.Text = false
+					case "expired":
+						status.ExpiresAt = now.Add(-time.Hour)
+					case "inactive":
+						status.Subscription.State = "inactive"
+					case "bad-version":
+						status.Version = 2
+					}
+					var calls, unsafeCalls atomic.Int32
+					srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						if r.Method != http.MethodGet || r.URL.Path != "/dot-bridge/v1/status" || r.Header.Get("Authorization") != "Bearer fixture-secret" {
+							unsafeCalls.Add(1)
+							w.WriteHeader(http.StatusForbidden)
+							return
+						}
+						calls.Add(1)
+						if state == "unavailable" {
+							w.WriteHeader(http.StatusServiceUnavailable)
+							return
+						}
+						if state == "unauthorized" {
+							w.WriteHeader(http.StatusUnauthorized)
+							return
+						}
+						_ = json.NewEncoder(w).Encode(status)
+					}))
+					t.Cleanup(srv.Close)
+					cfg := dotbridge.Config{Enabled: true, Address: strings.TrimPrefix(srv.URL, "http://"), Credential: "group-fixture"}
+					if err := dotbridge.SavePairing(cfg, "fixture-secret"); err != nil {
+						t.Fatal(err)
+					}
+					switch state {
+					case "disabled":
+						cfg.Enabled = false
+						if err := dotbridge.SaveConfig(cfg); err != nil {
+							t.Fatal(err)
+						}
+					case "unpaired":
+						store.token = ""
+					}
+					if dotbridge.CachedReady(time.Now(), dotbridge.CapabilityText) {
+						t.Fatal("fixture must start with cold readiness")
+					}
+					ref := "Dot E2E Validation"
+					if command == "set" {
+						ref = "dot-e2e-validation"
+					}
+					_, err := stdoutOf(t, func() error {
+						return groupCmd([]string{"group", command, ref, "models=dot/text,group/gh-light", "routing=order", "stays=off"})
+					})
+					if state == "ready" {
+						if err != nil {
+							t.Fatalf("cold paired group %s rejected dot/text: %v", command, err)
+						}
+						g, members, ok := provider.FindGroup("group/dot-e2e-validation")
+						if !ok || strings.Join(g.Members, ",") != "dot/text,group/gh-light" || g.Routing != "order" || g.Affinity != "off" {
+							t.Fatalf("saved group: %+v, found=%v", g, ok)
+						}
+						if len(members) != 2 || !members[0].Provider.IsDot() || members[0].Model != "text" || members[1].Provider.ID != "a" {
+							t.Fatalf("resolved members: %+v", members)
+						}
+					} else {
+						if err != nil {
+							t.Fatalf("%s bridge configuration rejected: %v", state, err)
+						}
+						if _, _, ok := provider.Resolve("dot/text"); ok {
+							t.Fatal("unready bridge selected Dot")
+						}
+						g, findErr := findGroup("dot-e2e-validation")
+						if findErr != nil || strings.Join(g.Members, ",") != "dot/text,group/gh-light" {
+							t.Fatalf("failed %s changed group: %+v, %v", command, g, findErr)
+						}
+					}
+					wantCalls := int32(1)
+					if state == "disabled" || state == "unpaired" {
+						wantCalls = 0
+					}
+					if calls.Load() != wantCalls || unsafeCalls.Load() != 0 {
+						t.Fatalf("status GETs=%d, want %d; unsafe requests=%d", calls.Load(), wantCalls, unsafeCalls.Load())
+					}
+				})
+			}
+		})
 	}
 }
 

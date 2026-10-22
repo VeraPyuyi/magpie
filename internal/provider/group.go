@@ -367,6 +367,9 @@ func groupsIn(entries []Entry) []Group {
 				for _, p := range All() {
 					have[p.ID] = true
 				}
+				if _, ok := DotConfigurationOption(); ok {
+					have[DotID] = true
+				}
 			}
 			g = withoutRemoved(g, have)
 		}

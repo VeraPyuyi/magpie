@@ -46,6 +46,12 @@ func (p Provider) Available() []catalog.Model {
 }
 
 func (p Provider) available() []catalog.Model {
+	if p.IsDot() {
+		if !dotMachineEnabled() {
+			return nil
+		}
+		return dotModels()
+	}
 	signedIn := p.Account != nil && p.Account.models != nil
 	var known []catalog.Model
 	if signedIn {
@@ -1389,6 +1395,9 @@ func (p Provider) Exposed() []catalog.Model {
 	if p.ServesNone() {
 		return nil
 	}
+	if p.IsDot() {
+		return p.Available()
+	}
 	avail := p.Available()
 	byID := make(map[string]catalog.Model, len(avail))
 	for _, m := range avail {
@@ -2531,6 +2540,9 @@ func resolveIn(entries []Entry, id string) (Provider, string, bool) {
 		// the providers a request holds (All): an agent's value of a
 		// model not listed lands here
 		if p, err := findIn(All(), pid); err == nil && p.On() && !p.ServesNone() {
+			if p.IsDot() && dotProbeRequired(model) != "" {
+				return Provider{}, "", false
+			}
 			return *p, model, true
 		}
 	}

@@ -31,6 +31,7 @@ import (
 
 	"github.com/yetone/magpie/internal/access"
 	"github.com/yetone/magpie/internal/awake"
+	"github.com/yetone/magpie/internal/dotbridge"
 	"github.com/yetone/magpie/internal/gwbudget"
 	"github.com/yetone/magpie/internal/gwmw"
 	"github.com/yetone/magpie/internal/gwtool"
@@ -636,6 +637,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/magpie/route", s.sessionRoute)
 	mux.HandleFunc("GET /v1/magpie/concurrency", s.concurrency)
 	mux.HandleFunc("GET /v1/magpie/limit", s.keyLimit)
+	mux.HandleFunc("GET /v1/magpie/dot/requests/{id}", s.dotRequest)
 	// a heap profile of this process, for magpie heap (loopback only)
 	mux.HandleFunc("GET "+HeapPath, s.heapProfile)
 	// a CPU profile of this process over some seconds, for magpie cpu
@@ -907,7 +909,7 @@ func cursorLocalModel(m map[string]any, e provider.Entry) {
 		types = []string{"anthropic_messages"}
 	}
 	m["api_types"] = types
-	c := map[string]any{"supports_tool_use": true, "supports_streaming": true, "output_modalities": []string{"text"},
+	c := map[string]any{"supports_tool_use": provider.CallerToolsSupported(e), "supports_streaming": true, "output_modalities": []string{"text"},
 		"supports_reasoning": e.Reasoning || len(e.Efforts) > 0}
 	if len(e.Efforts) > 0 {
 		c["reasoning_effort"] = e.Efforts
@@ -1617,6 +1619,21 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		s.record(call)
 		logged()
 	}
+	recoveryWriter := &dotRecoveryWriter{ResponseWriter: w}
+	if s.recoverDotOwner(recoveryWriter, r, from, body) {
+		call.Status, call.Provider, call.To = recoveryWriter.status, provider.DotID, from
+		if call.Status >= 400 {
+			call.Error = "dot original request recovery requires attention"
+		}
+		finishCapture()
+		call.Millis = time.Since(start).Milliseconds()
+		s.record(call)
+		rec := usage.Record{Time: start, Agent: call.Agent, Via: call.Via, Provider: call.Provider, Model: "text", Requested: call.Model, Millis: call.Millis, Status: call.Status, Rejected: call.Status >= 400, Session: sessionOf(r.Header), NativeSession: nativeSessionOf(r.Header), Kind: call.Kind}
+		failedWith(&rec, call.Status, call.Error, "")
+		withBodies(&rec, &call)
+		appendUsage(r, rec)
+		return
+	}
 	// a model's id without a provider in it that names a routing group is
 	// the group's, as "group/<id>" is, rather than one provider's that
 	// serves it: the Routing view shows the group it went to
@@ -1738,6 +1755,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		turnedAway()
 		return
 	}
+	// Keep Dot's original wire for preflight if planning selects a Dot
+	// candidate; image normalization must not make unsupported input fit.
+	dotBody := body
 	// a routing group's rules pick the member that goes first, looked at
 	// before any image is taken out of the request: one may be for images
 	g, ms, isGroup := provider.FindGroup(asked)
@@ -1991,6 +2011,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			}
 		}
 	}
+	var displaySkippedDot []DotSkipped
 	var accountHeld bool // every candidate was an account or key the calling key may not use
 	if keyHeld || accHeld {
 		who := keyWho
@@ -2004,7 +2025,81 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		} else if isGroup {
 			members = groupKeeps(keyWho, g, ms)
 		}
+		for _, list := range [][]candidate{cands, pl.held, pl.capped, pl.unlisted} {
+			for _, c := range list {
+				if c.p.IsDot() && ((!members[c.p.ID+"/"+c.model] && !modelAllowed(who, c.p, c.model)) || !accountAllowed(who, c)) {
+					displaySkippedDot = append(displaySkippedDot, DotSkipped{Model: c.model, Mode: dotModeOfModel(c.model), Reason: "not_authorized"})
+				}
+			}
+		}
 		cands, pl, accountHeld = allowedCandidates(who, cands, pl, members)
+	}
+	// Dot's capabilities constrain only Dot candidates. Other providers keep
+	// accepting their own wire shapes, including tool results and images.
+	if !isGroup && p.IsDot() || dotPlanned(cands, pl) {
+		dotReq, dotReqErr := dotRequirementsOf(from, dotBody)
+		if dotReqErr != nil {
+			dotReq.Unsupported = append(dotReq.Unsupported, dotReqErr.Error())
+		}
+		if !dotReq.ok() && !isGroup && p.IsDot() {
+			call.Status, call.Error = 400, "unsupported for dot"
+			dotExplicitUnsupported(w, from, call.Model, dotReq)
+			turnedAway()
+			return
+		}
+		if dotPlanned(cands, pl) && !dotReq.ok() {
+			displaySkippedDot = append(displaySkippedDot, dotDisplaySkipped(from, dotBody, cands, pl)...)
+		}
+		cands, pl = dotCandidates(cands, pl, dotReq)
+	}
+	if isGroup {
+		// Capture configured Dot members at planning time even when readiness
+		// removed them from the served catalog. This is display evidence only.
+		seenGroups := map[string]bool{}
+		var configured func(provider.Group)
+		configured = func(current provider.Group) {
+			if seenGroups[current.ID] {
+				return
+			}
+			seenGroups[current.ID] = true
+			for _, ref := range current.Members {
+				if strings.HasPrefix(ref, "group/") {
+					if child, _, ok := provider.FindGroup(strings.TrimPrefix(ref, "group/")); ok {
+						configured(child)
+					}
+					continue
+				}
+				model := strings.TrimPrefix(ref, "dot/")
+				if model == ref || model != provider.DotTextModel && model != provider.DotTaskModel {
+					continue
+				}
+				present := false
+				for _, list := range [][]candidate{cands, pl.held, pl.capped, pl.unlisted} {
+					for _, c := range list {
+						if c.p.IsDot() && c.model == model {
+							present = true
+						}
+					}
+				}
+				for _, list := range [][]Weighed{pl.left, pl.order, pl.unlistedW} {
+					for _, w := range list {
+						if w.Provider == provider.DotID && w.Model == model {
+							present = true
+						}
+					}
+				}
+				for _, item := range displaySkippedDot {
+					if item.Model == model {
+						present = true
+					}
+				}
+				if !present {
+					// Absence alone cannot prove readiness or body incompatibility.
+					displaySkippedDot = append(displaySkippedDot, DotSkipped{Model: model, Mode: dotModeOfModel(model), Reason: "not_candidate"})
+				}
+			}
+		}
+		configured(g)
 	}
 	// a conversation that stays strictly where it is goes on on its
 	// account past the usage cap set on it, and is refused there, not
@@ -2223,7 +2318,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		capture.tools = tools
 	}
 	tierAsked := bodyTier(from, body) // the service tier the client asked for (#1784)
-	tr := s.trace.beginFor(r, Route{turn: turn, dirOf: dirOf(from, plain), tools: tools, imageTurn: drawingTurnID(metadata.Turn), imageCaller: codexTurnKey(r, call.Agent), TitleLink: link, Pinned: pin, Time: start, Agent: call.Agent, Session: sessionOf(r.Header), Conv: convOf(r.Header, body), ParentSession: titleParentSession(r.Header, metadata, call.Kind), Kind: call.Kind, For: call.For, Model: call.Model, Effort: requestEffort(from, body), Tier: tierAsked, Provider: p.ID, Group: group, Rule: hit, Nested: nested, SealedTask: sealedTask, LeadAccount: leadAccount, Compaction: compactionWho(checkpoint), Subagent: subagent, SubagentEffort: subagentEffort, Sub: subOf(r.Header), SubagentID: subagentID, Affinity: shown, Order: pl.order, Left: pl.left})
+	tr := s.trace.beginFor(r, Route{turn: turn, dirOf: dirOf(from, plain), tools: tools, imageTurn: drawingTurnID(metadata.Turn), imageCaller: codexTurnKey(r, call.Agent), TitleLink: link, Pinned: pin, Time: start, Agent: call.Agent, Session: sessionOf(r.Header), Conv: convOf(r.Header, body), ParentSession: titleParentSession(r.Header, metadata, call.Kind), Kind: call.Kind, For: call.For, Model: call.Model, Effort: requestEffort(from, body), Tier: tierAsked, Provider: p.ID, Group: group, Rule: hit, Nested: nested, SealedTask: sealedTask, LeadAccount: leadAccount, Compaction: compactionWho(checkpoint), Subagent: subagent, SubagentEffort: subagentEffort, Sub: subOf(r.Header), SubagentID: subagentID, Affinity: shown, Order: pl.order, Left: pl.left, DisplaySkippedDot: displaySkippedDot})
 	if watched != nil {
 		watched.routeID = tr.ID
 	}
@@ -2337,12 +2432,21 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		// for a reply that only reasoned to be asked again (#667).
 		hw.thinkingShown = !refusesAfterThinking(c.model) || last && modelFamily(c.model) != ""
 		hw.ctx, hw.alive, hw.streams = r.Context(), kept, streams
+		if c.p.IsDot() {
+			// Configure headers before the watch starts; serveDot writes no raw headers.
+			hw.loop, hw.reloop = nil, false
+			if streams {
+				hw.header.Set("Content-Type", "text/event-stream; charset=utf-8")
+			} else {
+				hw.header.Set("Content-Type", "application/json")
+			}
+		}
 		report := cacheReport
 		if c.p.Account == nil || c.p.Account.Agent != "claude" {
 			report = nil
 		}
 		cacheReportTry(hw, report)
-		if streams && !settings.Load().NoLoopGuard {
+		if streams && !settings.Load().NoLoopGuard && !c.p.IsDot() {
 			// a reply stuck in a loop is ended, not let run to its limit
 			// (#1359)
 			hw.loop = &loopGuard{}
@@ -2351,7 +2455,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		// a member of a group in the group is timed by the innermost
 		// group that sets a FirstToken (#2246), else by the group asked for
 		firstToken := cmp.Or(c.firstToken, g.FirstToken)
-		if isGroup && firstToken > 0 && !last && streams {
+		if isGroup && firstToken > 0 && !last && streams && !c.p.IsDot() {
 			// slow to start, the next member is asked (Group.FirstToken)
 			hw.firstWait = time.Duration(firstToken) * time.Second
 		}
@@ -2558,6 +2662,45 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 				attemptBody, updated = b, true
 			}
 		}
+		// Check the final body after middleware, output limits, effort and
+		// tier rewrites, before a Dot attempt can queue or submit anything.
+		var dotRequest *http.Request
+		var dotLatestJob dotbridge.Job
+		var dotLatestObservation *DotJobObservation
+		if c.p.IsDot() {
+			recheck, err := dotRequirementsFor(from, attemptBody, c.model)
+			if original, ok := r.Context().Value(dotAdmissionKey{}).(dotAdmission); ok {
+				verdict := original.answer
+				if c.model == provider.DotTaskModel {
+					verdict = original.task
+				}
+				recheck.Unsupported = append(recheck.Unsupported, verdict.Unsupported...)
+			}
+			if err != nil {
+				recheck.Unsupported = append(recheck.Unsupported, err.Error())
+			}
+			if !recheck.ok() {
+				if !isGroup {
+					call.Status, call.Error = 400, "unsupported for dot"
+					dotExplicitUnsupported(w, from, call.Model, recheck)
+					break
+				}
+				skipped = append(skipped, c.label()+": unsupported for dot")
+				reason := dotSkipReasonLabel(strings.Join(recheck.Unsupported, ", "))
+				s.trace.update(tr, func(t *Route) {
+					items := append([]DotSkipped(nil), t.DisplaySkippedDot...)
+					items = append(items, DotSkipped{Model: c.model, Mode: dotModeOfModel(c.model), Reason: reason, ObservedAt: time.Now().UTC()})
+					t.DisplaySkippedDot = items
+				})
+				continue
+			}
+			dotRequest, err = prepareDot(r, from, c.model, attemptBody)
+			if err != nil {
+				call.Status, call.Error = 400, err.Error()
+				failTo(w, kept, from, call.Status, call.Error)
+				break
+			}
+		}
 		s.trace.update(tr, func(t *Route) {
 			t.imageProvider = c.p.ID
 			t.Tries = append(t.Tries, Try{ID: c.rest, Model: c.model, Effort: sent, Picked: picked, Fixed: fixed, RuleEffort: ruled, Fast: fast, Start: began})
@@ -2589,7 +2732,23 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		} else {
 			// a stream that fails before anything is said is let go at
 			// once (hw.stop), not read on until the vendor hangs up
-			ctx, stop := context.WithCancel(withWireAt(r.Context(), at))
+			attemptContext := r.Context()
+			if dotRequest != nil {
+				tryIndex := len(tr.Tries) - 1
+				attemptContext = context.WithValue(dotRequest.Context(), dotObserverKey{}, func(job dotbridge.Job) {
+					dotLatestJob = job
+					observation := compactDotJob(job)
+					dotLatestObservation = observation
+					snap := dotAttemptOf(dotRequest.Context()).Snapshot()
+					s.trace.update(tr, func(t *Route) {
+						if tryIndex >= 0 && tryIndex < len(t.Tries) {
+							t.Tries[tryIndex].Dot = &snap
+							t.Tries[tryIndex].DotJob = observation
+						}
+					})
+				})
+			}
+			ctx, stop := context.WithCancel(withWireAt(attemptContext, at))
 			if isGroup {
 				ctx = groupTry(ctx)
 			}
@@ -2651,7 +2810,11 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 					// the slot is the vendor's until the reply is read to
 					// its end or the agent has gone: attempt returns then
 					defer release()
-					defer hw.watch()()
+					if c.p.IsDot() {
+						defer hw.watchDot()()
+					} else {
+						defer hw.watch()()
+					}
 					defer notePhase(ctx, "upstream")()
 					call.Status, call.Error = s.attempt(hw, r.WithContext(ctx), from, c.p, c.model, attemptBody, &call)
 				}()
@@ -2760,6 +2923,51 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		if at := wrote.Load(); at > 0 && call.TTFT > 0 {
 			sentMs = min(max(time.Unix(0, at).Sub(start).Milliseconds(), 1), call.TTFT)
 			ownMs, retriedMs, queuedMs = splitSent(sentMs, start, firstBegan, began, asked.Load(), queued)
+		}
+		// The client-owned barrier precedes every cancellation, retry and
+		// fallback decision, regardless of status or held-writer state.
+		if dotRequest != nil {
+			snap := dotAttemptOf(dotRequest.Context()).Snapshot()
+			if snap.BlockReplay {
+				try.Dot = &snap
+				if dotLatestJob.JobID != "" {
+					try.DotJob = dotLatestObservation
+				}
+				if r.Context().Err() != nil {
+					call.Status, call.Error = canceled(r.Context())
+					try.Fail = failCanceled
+				} else if call.Status == 200 && call.Error == "" {
+					hw.release()
+					clientResponseID = call.Usage.ResponseID
+					servedCandidate(c, 0)
+					if hit == nil || !hit.Compact {
+						answered(stuck, c, aff.Turn, call.Usage)
+					}
+					sealedBy = &c
+					if hit != nil && !hit.Compact {
+						ruleAnswered(ruleAt, call.Usage)
+					}
+					for _, at := range nestedAt {
+						ruleAnswered(at, call.Usage)
+					}
+				} else {
+					code := call.Error
+					if code == "" {
+						code = dotErrPending
+					}
+					try.DotError = code
+					try.Fail = failOther
+					call.Status = dotFailure(w, kept, from, snap, code, dotLatestJob)
+					if kept.sent {
+						call.Status = http.StatusOK
+					}
+					call.Error = dotFailureMessage(snap, code)
+				}
+				try.Status, try.Error = call.Status, call.Error
+				watched.attempt(call, try, c.p.ID, sent, hw, capture)
+				s.trace.update(tr, func(t *Route) { t.Tries[len(t.Tries)-1] = try })
+				break
+			}
 		}
 		if r.Context().Err() != nil && !hw.ended {
 			// the agent went away: nobody failed, and nobody else is asked
@@ -3478,6 +3686,9 @@ func sinceStart(before, d time.Duration) int64 {
 // attempt sends a request to one provider. call.To stays empty when the
 // provider has no endpoint to send it to.
 func (s *Server) attempt(w http.ResponseWriter, r *http.Request, from provider.Protocol, p provider.Provider, model string, body []byte, call *Call) (int, string) {
+	if p.IsDot() {
+		return s.serveDot(w, r, from, p, model, body, call)
+	}
 	// Normalize for the actual destination, separately on each fallback.
 	// Native ChatGPT accounts accept standalone tool outputs themselves.
 	if from == provider.Responses && (p.Account == nil || p.Account.Agent != "codex") {

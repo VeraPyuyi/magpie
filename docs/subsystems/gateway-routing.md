@@ -71,6 +71,132 @@ text is never taken as a suggestion, as Codex would put it in the user's
 composer as their next message, so it gives no prediction and the call is
 recorded as a prediction failure (`noPrediction`).
 
+## Dot text capability preflight
+
+The machine-local DotControl provider accepts `dot/text` answer mode and
+`dot/task` durable task mode on Chat Completions and Responses. Task mode
+converts the final nonblank user turn into a Dot task with preceding explicit
+messages as context, rejects caller local-environment markers, and waits up to
+`task_wait_seconds` (default 600, bounded 1..3600) independently of answer
+wait. Task results may be text plus safe HTTPS artifact links or artifacts
+only; the gateway never fetches artifact URLs.
+
+`GET /v1/magpie/dot/requests/{id}` recovers an accepted request in the
+caller's agent scope with the same auth stack and mode permission as stable-header
+recovery. `{id}` is the exact internal `request_id` returned in metadata, for
+both random and stable-header requests. It performs only Resume GET against
+the original pairing; it never reserves, POSTs, or redispatches. Group-only
+restricted keys fail closed because immutable group authorization is not retained.
+
+Admission retains per-mode original capability verdicts at the decoded body
+boundary before request hooks and middleware, even without stable headers.
+Removing caller tools, developer turns or known local environment formats cannot
+make them eligible later. The final candidate body is checked again. Dot can
+use its own cloud browser, computer and execution tools for the delegated task;
+caller tool definitions/results and the caller's local tool loop are unsupported.
+Context materials must be explicitly supplied or accessible in the Dot account;
+Magpie does not assume a local repository is synchronized there.
+
+Completed replies carry `magpie_dot` on the Chat assistant message or Responses
+top level, preserved in SSE. It contains mode, actual job state, bounded summary,
+request/job IDs, `status_url`, and validated artifacts. Pending errors expose the
+same progress fields, distinguishing `waiting_user` from `running`. Acceptance
+journal state remains separate from job progress; unknown acceptance never
+invents progress. Artifact destinations use the producer's public-host policy
+without DNS or HTTP fetches; labels and link destinations are escaped for Markdown.
+Direct Dot and mixed Dot groups do not promise caller tools in Cursor's catalog
+and are omitted from Codex's catalog, whose default metadata enables local tools. [`dot_requirements.go`](../../internal/gateway/dot_requirements.go)
+checks its wire allowlist only when the resolved single provider or the
+planned candidates include Dot. Other providers retain their existing
+handling of tools, images, developer messages and Responses function items;
+Dot's parser never rejects those providers' requests.
+
+An unsupported single request resolved to `dot/text` returns a local 400.
+In a routing group, unsupported Dot candidates are removed by `dotCandidates`,
+even when Dot is the group's first member. Other members remain eligible.
+Each Dot candidate is checked again after middleware, output limits,
+reasoning effort and service-tier changes, before queueing or submission.
+Unsupported group candidates are skipped at this point too.
+
+Bare `text` follows normal model resolution: `Resolve` takes the first
+provider exposing it in Providers order, which includes Dot only when ready.
+The synthetic Dot provider is appended after stored providers, so their
+own `text` models keep precedence. With found groups on, the gateway may
+route a shared bare `text` through the usual found group. Use `dot/text`
+to select Dot explicitly; its capability rules follow the resolved
+provider, never the model name alone.
+
+`refreshDotStatus` in [`dot_status.go`](../../internal/gateway/dot_status.go)
+continues polling every five seconds through a disabled or unreadable
+configuration, so enabling and pairing while serving takes effect without
+a gateway restart. Dot submissions use the dedicated bridge path, before
+the generic HTTP forwarder; `dot://bridge` only marks its supported APIs.
+
+`attempt` branches to [`serveDot`](../../internal/gateway/dot.go) before any
+protocol normalization, proxy selection, translation or HTTP forwarding.
+`serve` prepares the immutable `dotSubmission` and binds the client's Attempt
+on a private context key before calling `attempt`. `Enqueue` reserves the
+journal identity before POST, and the client sets its replay barrier before
+starting that single POST. After the writer watch has joined and try timings
+are collected, `serve` checks `Snapshot.BlockReplay` before cancellation,
+slow-start handling, retries, patience replans or fallback. Accepted and
+uncertain submissions end the candidate loop while retaining shared trace,
+usage and recent-call bookkeeping. `Try.Dot` contains only the identity and
+acceptance snapshot. `Try.DotJob` separately records compact validated job
+observations as enqueue and poll complete, before the HTTP wait ends. Each
+observation is immutable, includes its observation time and never contains full
+prompt/result text or untrusted diagnostic strings. Final try reconstruction
+retains the latest observation. Vendor headers and response JSON cannot create
+this state.
+
+`Route.display_skipped_dot` captures configured Dot modes excluded during
+planning or final per-mode preflight. Fixed reason categories explain caller
+tools, local environment, missing final user task, unsupported parameters or
+unavailable mode. These rows appear beside other candidate seats and never make
+a skipped model eligible. The snapshot is captured for that request, including
+configured nested groups; later group edits do not rewrite its explanation.
+The routing UI merges these modes into one omission summary per distinct request
+evidence. A ready Dot retains normal candidate color with the translated
+“Not involved in this execution” note. When `/api/dot/status` reports Dot unready,
+that summary is dimmed and also shows the current status reason; actual executing
+and answered Dot seats retain their trace-driven appearance. This status display
+does not alter eligibility or submit requests.
+
+Dot waits use the configured answer budget (120 seconds by default, at most
+600) and the bridge client's short HTTP budget. Group FirstToken and reasoning
+loop retries do not apply. Polls use `ByRequest` so every receipt and result
+is checked against the attempt identity. While waiting, streaming callers
+receive only SSE comments. A completed nonempty result is buffered and emitted
+once in Chat or Responses format, without invented usage or reasoning.
+Timeouts return 409 `dot_job_pending`, or `dot_acceptance_unknown` after an
+uncertain submission, with request/job references and
+`automatic_redispatch:false`. If comments already sent HTTP 200, the same
+metadata is sent as a native SSE error with no successful completion.
+Disconnecting stops the wait and never sends a cancellation request.
+
+Before ordinary model resolution, `recoverDotOwner` checks a stable header
+against durable journal ownership for the authenticated caller and agent,
+including previous pairing namespaces. A hidden Dot model or reordered group
+cannot redirect that identity to a vendor. Recovery validates the original
+original-input fingerprint, final request digest and durable job ID and uses
+GET only, even after readiness expires. The original fingerprint is captured
+at the decoded body-read boundary before hooks or middleware and binds exact
+bytes and caller/protocol/model/path/session context. A legacy record without
+that hash fails closed for explicit original-ID recovery.
+A locally disabled pairing can use a recovery-only connection which rejects
+POST; removed or replaced credentials require original authorization and never
+cross queues. A middleware-transformed body that cannot reproduce the saved
+digest returns an explicit recovery conflict without dispatch. Restricted keys
+must currently permit `dot/text`; keys limited to a group alone require manual
+original-request recovery. Unknown acceptance never authorizes redispatch.
+
+`X-Magpie-Dot-Request-ID` supplies identity only. Valid explicit IDs are hashed
+with caller and agent scope; repeated matching requests query the existing
+job and changed content conflicts locally. Without this header, each HTTP
+request receives a random identity, so client retries cannot be deduplicated
+across requests. Session isolation uses an explicit session header or the
+random request identity, never a prompt hash or routing trace ID.
+
 ## Runtime path
 
 1. `handle(proto)` reads the body and the model (`requestBody`, `requestModel`), then calls `serveAgent`. Every route that reads an agent's body (each API, count_tokens, Gemini's, embeddings, images, videos, System One, the Codex backend path) reads it through `readBoundedRequestBody` in [`request_bounds.go`](../../internal/gateway/request_bounds.go). It decodes a `Content-Encoding` of `gzip` or `zstd` (`decodedBody`; Codex sends zstd to a custom provider's `/v1/responses` too, #1223) and drops the header, so the provider is sent plain JSON, with one exception: a ChatGPT account's turn (POST `CodexBase`/responses, from the accounts loop in `forwardOnce` or relayed by `codexUpstreamOn`) is compressed again with zstd and a window of at most 2 MiB, as Codex's own client sends it (`provider.CodexCompressed`; openai/codex `responses_request_compression` and `http-client/src/request.rs`). It is compressed once the body is final, and again on each try. `/responses/compact`, an API key's requests and every other provider stay plain. Sent plain, a 1.1 MB text-only turn was answered 503 (ylorn on X). The plain body is what magpie keeps and shows, and `codexDropped` judges a reset by the bytes that went on the wire. `codexDropped` also reads Envoy's 507 "exceeded request buffer limit while retrying upstream" (the backend failed and the front couldn't retry a body that large) as that reset, at any size, told as a 503 so magpie, Codex and pi ask again and nobody rests (#2034). The size limit (`defaultBodyLimit`, 512 MB) holds for the decoded bytes (413), and any other encoding is refused 415. It was 128 MB until a long Codex session that had read many images went past it decoded, its inline screenshots resent each turn, and got the 413 on all five of Codex's retries (#1422, `TestImageHeavyCodexTurnIsRead`). magpie's own 413 says it is magpie's gateway limit, with the size, and that the provider was not asked (`overLimit`); `writeError` adds to any 413 it isn't holding that this is a byte limit, not the model's context, and to `/compact` or start a new conversation (`TestOverLimitSaysWhoseAndWhatToDo`). Every shape but Gemini's types a 413 `request_too_large`, Anthropic's own type, which pi's overflow table knows: pi compacts and tries once more rather than stopping on an OpenAI-shaped `api_error` (@wilsonxuuuu on X, `TestPayloadTooLargeSaysRequestTooLargeToPi`). `keyLimited` reads a limited key's compressed body the same way, so its reservation is the decoded size. `serveAgent` runs the [middleware](gateway-middleware.md) chain, then `serve`.
