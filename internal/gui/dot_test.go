@@ -43,7 +43,7 @@ func TestDotGUIHandler(t *testing.T) {
 		switch {
 		case r.URL.Path == "/dot-bridge/v1/status":
 			now := time.Now()
-			json.NewEncoder(w).Encode(dotbridge.Status{Version: 1, Enabled: true, Paired: true, Ready: true, VerifiedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour), Subscription: dotbridge.SubscriptionStatus{State: "active", ExpiresAt: now.Add(time.Hour)}, Capabilities: dotbridge.Capabilities{Text: true, Tasks: tasks}})
+			json.NewEncoder(w).Encode(dotbridge.Status{Version: 1, Enabled: true, Paired: true, Ready: true, VerifiedAt: now.Add(-time.Minute), Subscription: dotbridge.SubscriptionStatus{State: "active"}, Capabilities: dotbridge.Capabilities{Text: true, Tasks: tasks}})
 		case r.Method == "POST" && r.URL.Path == "/dot-bridge/v1/jobs":
 			posts++
 			var sub dotbridge.Submission
@@ -103,6 +103,10 @@ func TestDotGUIHandler(t *testing.T) {
 		if w.Code != 403 {
 			t.Fatalf("guard %v: %d %s", headers, w.Code, w.Body)
 		}
+	}
+	status := ask("GET", "status", "", nil)
+	if status.Code != 200 || !strings.Contains(status.Body.String(), `"subscription_term":"permanent"`) || !strings.Contains(status.Body.String(), `"text_available":true`) || strings.Contains(status.Body.String(), "0001-01-01") {
+		t.Fatalf("permanent status: %d %s", status.Code, status.Body)
 	}
 	w := ask("POST", "jobs", body, nil)
 	if w.Code != 409 || !strings.Contains(w.Body.String(), "probe_required") {

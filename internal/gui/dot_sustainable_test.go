@@ -20,7 +20,7 @@ func TestDotGUIStatusNeverPaired(t *testing.T) {
 	}
 }
 func TestDotGUIExpiredSubscriptionReason(t *testing.T) {
-	st := dotbridge.Status{Version: 1, Enabled: true, Paired: true, Code: "probe_required", Subscription: dotbridge.SubscriptionStatus{State: "active", ExpiresAt: time.Now().Add(-time.Hour)}}
+	st := dotbridge.Status{Version: 1, Enabled: true, Paired: true, Code: "probe_required", Subscription: dotbridge.SubscriptionStatus{State: "active", ExpiresAt: new(time.Now().Add(-time.Hour))}}
 	if st.DisplayCode(time.Now()) != "subscription_expired" {
 		t.Fatal("actual subscription expiry erased into probe_required")
 	}
@@ -28,11 +28,21 @@ func TestDotGUIExpiredSubscriptionReason(t *testing.T) {
 
 func TestDotGUIContinuousLease(t *testing.T) {
 	now := time.Now()
-	st := dotbridge.Status{Version: 1, Enabled: true, Paired: true, Ready: true, VerifiedAt: now.Add(-time.Hour), ExpiresAt: now.Add(time.Hour), Subscription: dotbridge.SubscriptionStatus{State: "active", ExpiresAt: now.Add(time.Hour)}, Capabilities: dotbridge.Capabilities{Tasks: true}}
+	st := dotbridge.Status{Version: 1, Enabled: true, Paired: true, Ready: true, VerifiedAt: now.Add(-time.Hour), ExpiresAt: new(now.Add(time.Hour)), Subscription: dotbridge.SubscriptionStatus{State: "active", ExpiresAt: new(now.Add(time.Hour))}, Capabilities: dotbridge.Capabilities{Tasks: true}}
 	if !dotTaskAvailable(st) {
 		t.Fatal("authenticated future lease rejected because proof is older than ten minutes")
 	}
-	st.Subscription.ExpiresAt = now.Add(-time.Second)
+	st.ExpiresAt = nil
+	st.Subscription.ExpiresAt = nil
+	if !dotTaskAvailable(st) {
+		t.Fatal("permanent task capability rejected")
+	}
+	st.VerifiedAt = time.Time{}
+	if dotTaskAvailable(st) {
+		t.Fatal("missing proof admitted")
+	}
+	st.VerifiedAt = now.Add(-time.Hour)
+	st.Subscription.ExpiresAt = new(now.Add(-time.Second))
 	if dotTaskAvailable(st) {
 		t.Fatal("expired subscription admitted")
 	}

@@ -396,6 +396,13 @@ func (c *Connection) Status(ctx context.Context) (Status, error) {
 	if st.Version != 1 {
 		return Status{}, errReceipt
 	}
+	// Older servers serialize absent optional dates as year one. Normalize before
+	// caching or returning status so display clients never print a synthetic date.
+	for _, date := range []**time.Time{&st.ExpiresAt, &st.Subscription.ExpiresAt, &st.Subscription.RefreshBefore} {
+		if *date != nil && (*date).IsZero() {
+			*date = nil
+		}
+	}
 	cfg, cfgErr := LoadConfig()
 	readyCache.Lock()
 	if c.pairingIdentity != "" && cfgErr == nil && cfg.Enabled && PairingIdentity(cfg) == c.pairingIdentity && cfg.ReadinessRevision == c.readinessRevision && readyCache.generation == generation {

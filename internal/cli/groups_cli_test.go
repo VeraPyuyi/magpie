@@ -289,8 +289,8 @@ func TestGroupDotReadiness(t *testing.T) {
 					}
 					now := time.Now()
 					status := dotbridge.Status{Version: 1, Enabled: true, Paired: true, Ready: true,
-						VerifiedAt: now.Add(-time.Second), ExpiresAt: now.Add(time.Hour),
-						Subscription: dotbridge.SubscriptionStatus{State: "active", ExpiresAt: now.Add(time.Hour)},
+						VerifiedAt: now.Add(-time.Second), ExpiresAt: new(now.Add(time.Hour)),
+						Subscription: dotbridge.SubscriptionStatus{State: "active", ExpiresAt: new(now.Add(time.Hour))},
 						Capabilities: dotbridge.Capabilities{Text: true}}
 					switch state {
 					case "unready":
@@ -298,7 +298,7 @@ func TestGroupDotReadiness(t *testing.T) {
 					case "no-text":
 						status.Capabilities.Text = false
 					case "expired":
-						status.ExpiresAt = now.Add(-time.Hour)
+						status.ExpiresAt = new(now.Add(-time.Hour))
 					case "inactive":
 						status.Subscription.State = "inactive"
 					case "bad-version":

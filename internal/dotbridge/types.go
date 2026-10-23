@@ -106,7 +106,7 @@ type Status struct {
 	Ready            bool               `json:"ready"`
 	Code             string             `json:"code"`
 	VerifiedAt       time.Time          `json:"verified_at,omitempty"`
-	ExpiresAt        time.Time          `json:"expires_at,omitempty"`
+	ExpiresAt        *time.Time         `json:"expires_at,omitempty"`
 	Subscription     SubscriptionStatus `json:"subscription"`
 	Capabilities     Capabilities       `json:"capabilities"`
 	Capacity         *Capacity          `json:"capacity,omitempty"`
@@ -115,11 +115,11 @@ type Status struct {
 
 // SubscriptionStatus describes the current authenticated subscription.
 type SubscriptionStatus struct {
-	State           string    `json:"state"`
-	ExpiresAt       time.Time `json:"expires_at,omitempty"`
-	RefreshBefore   time.Time `json:"refresh_before,omitempty"`
-	LastRefreshedAt time.Time `json:"last_refreshed_at,omitempty"`
-	RenewalState    string    `json:"renewal_state,omitempty"`
+	State           string     `json:"state"`
+	ExpiresAt       *time.Time `json:"expires_at,omitempty"`
+	RefreshBefore   *time.Time `json:"refresh_before,omitempty"`
+	LastRefreshedAt time.Time  `json:"last_refreshed_at,omitzero"`
+	RenewalState    string     `json:"renewal_state,omitempty"`
 }
 
 // SubscribeFailure contains only bounded diagnostic codes, never callback data.

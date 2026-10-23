@@ -20,7 +20,7 @@ for (const engine of process.env.BROWSER ? [process.env.BROWSER] : ['chromium','
     if(u.pathname==='/wails/runtime.js')return route.fulfill({contentType:'text/javascript',body:'export const Window={};'});
     if(u.pathname==='/api/state')return json({agents:[],profiles:[],settings:{lang,theme:'light'}});
     if(u.pathname==='/api/providers')return json({providers:[],presets:[],gateway:{running:true,url:'http://127.0.0.1:3999',calls:[],groups:[]}});
-    if(u.pathname==='/api/dot/status')return json({enabled,code:!enabled?'disabled':available?'ready':'unverified',task_available:available,capabilities:{tasks:available}});
+    if(u.pathname==='/api/dot/status')return json({enabled,code:!enabled?'disabled':available?'ready':'unverified',task_available:available,subscription_term:enabled?'permanent':'',capabilities:{tasks:available}});
     if(u.pathname==='/api/dot/requests')return json(identity?[{request_id:identity.request_id,session_id:identity.session_id,mode:'task',digest:'a'.repeat(64),state:'acceptance_unknown',block_replay:true}]:[]);
     if(u.pathname==='/api/dot/jobs'){posts.push(r.postDataJSON());return route.fulfill({status:409,json:{code:'outcome_unknown'}});}
     if(u.pathname.startsWith('/api/dot/requests/')){
@@ -44,7 +44,9 @@ for (const engine of process.env.BROWSER ? [process.env.BROWSER] : ['chromium','
    await page.locator('#dot-history button').first().waitFor();
    assert.ok((await page.locator('#dot-pair').textContent()).length>10);
    available=true;await page.locator('#dot-refresh').click();
-   await page.waitForFunction(()=>document.querySelector('#dot-status').textContent===(t('Dot state: ready')==='Dot state: ready'?'ready':t('Dot state: ready')));
+   await page.waitForFunction(()=>document.querySelector('#dot-status').textContent.startsWith((t('Dot state: ready')==='Dot state: ready'?'ready':t('Dot state: ready'))));
+   const label={en:'Permanent subscription',zh:'订阅无到期','zh-TW':'訂閱無到期',ja:'無期限のサブスクリプション',de:'Unbefristetes Abonnement'}[lang];
+   assert.ok((await page.locator('#dot-status').textContent()).includes(label));
    await page.reload();await page.locator('#dot-history button').first().waitFor();
    await page.locator('#dot-result pre').waitFor();
    assert.ok((await page.locator('#dot-identity').textContent()).includes(identity.request_id));

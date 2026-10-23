@@ -16,7 +16,7 @@ for(const engine of process.env.BROWSER?[process.env.BROWSER]:['chromium','webki
    if(u.pathname==='/wails/runtime.js')return route.fulfill({contentType:'text/javascript',body:'export const Window={};'});
    if(u.pathname==='/api/state')return json({agents:[],profiles:[],settings:{lang,theme:'light'}});
    if(u.pathname==='/api/providers')return json({providers:[],presets:[],gateway:{running:false,calls:[],groups:[]}});
-   if(u.pathname==='/api/dot/status')return json({enabled:true,code,text_available:code==='ready',subscription:{renewal_state:code==='ready'?'failed':'current'}});
+   if(u.pathname==='/api/dot/status')return json({enabled:true,code,text_available:code==='ready',subscription:{state:'active',renewal_state:code==='ready'?'failed':'current'},subscription_term:'permanent'});
    if(u.pathname==='/api/groups')return json(groups());
    if(u.pathname==='/api/groups/save'){saved=r.postDataJSON();return json({...groups(),groups:[{...saved,ready:false,memberInfo:[{id:'dot/task',ready:false}]}]});}
    if(u.pathname==='/api/gateway/trace') {if(u.searchParams.has('wait'))return new Promise(()=>{});return json({mine:false,now:new Date().toISOString(),seq:1,routes:[],totals:{}});}
@@ -28,6 +28,8 @@ for(const engine of process.env.BROWSER?[process.env.BROWSER]:['chromium','webki
   for(const state of ['unpaired','disabled','offline','probe_required','subscription_expired','ready']) {
    code=state;await row.getByRole('button',{name:await page.evaluate(()=>t('Refresh Dot status')),exact:true}).click();await page.waitForFunction(s=>document.querySelector('#rt-dot-status').dataset.state===s,state);
    assert.ok((await row.textContent()).includes('Dot'));
+   const permanent = {en:'Permanent subscription',zh:'订阅无到期','zh-TW':'訂閱無到期',ja:'無期限のサブスクリプション',de:'Unbefristetes Abonnement'}[lang];
+   assert.ok((await row.textContent()).includes(permanent), `${lang}: missing permanent label`);
   }
   await page.locator('#rtNewGroup').click();
   await page.locator('.rt-gadd').first().click();

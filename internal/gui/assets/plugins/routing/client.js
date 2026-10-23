@@ -68,6 +68,7 @@ function routingPage(part) {
   function drawDotStatus() {
     dotRow.dataset.state = dotStatus.code;
     dotWords.textContent = dotStatusWord();
+    if (dotStatus.subscription_term === "permanent") dotWords.textContent += " · " + t("Permanent subscription");
     if (dotStatus.subscription?.renewal_state === "failed" || dotStatus.subscribe_failure) dotWords.textContent += " · " + t("Dot subscription renewal failed; ChatGPT must refresh it before expiry");
     dotRefresh.textContent = t("Refresh Dot status");
   }

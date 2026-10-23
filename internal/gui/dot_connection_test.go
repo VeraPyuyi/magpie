@@ -31,7 +31,7 @@ func TestDotGUIConnectionOwnsJournal(t *testing.T) {
 		switch {
 		case r.URL.Path == "/dot-bridge/v1/status":
 			now := time.Now()
-			json.NewEncoder(w).Encode(dotbridge.Status{Version: 1, Enabled: true, Paired: true, Ready: true, VerifiedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour), Subscription: dotbridge.SubscriptionStatus{State: "active", ExpiresAt: now.Add(time.Hour)}, Capabilities: dotbridge.Capabilities{Tasks: true}})
+			json.NewEncoder(w).Encode(dotbridge.Status{Version: 1, Enabled: true, Paired: true, Ready: true, VerifiedAt: now.Add(-time.Minute), ExpiresAt: new(now.Add(time.Hour)), Subscription: dotbridge.SubscriptionStatus{State: "active", ExpiresAt: new(now.Add(time.Hour))}, Capabilities: dotbridge.Capabilities{Tasks: true}})
 		case r.Method == "POST" && r.URL.Path == "/dot-bridge/v1/jobs":
 			bPosts.Add(1)
 			j.State = "queued"

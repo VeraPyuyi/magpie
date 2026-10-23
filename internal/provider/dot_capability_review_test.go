@@ -18,7 +18,7 @@ func TestDotEachModelRequiresItsCapability(t *testing.T) {
 			t.Cleanup(func() { dotbridge.SetCredentialStore(nil) })
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				now := time.Now()
-				json.NewEncoder(w).Encode(dotbridge.Status{Version: 1, Enabled: true, Paired: true, Ready: true, VerifiedAt: now.Add(-time.Second), ExpiresAt: now.Add(time.Hour), Subscription: dotbridge.SubscriptionStatus{State: "active", ExpiresAt: now.Add(time.Hour)}, Capabilities: dotbridge.Capabilities{Text: !tasks, Tasks: tasks}})
+				json.NewEncoder(w).Encode(dotbridge.Status{Version: 1, Enabled: true, Paired: true, Ready: true, VerifiedAt: now.Add(-time.Second), Subscription: dotbridge.SubscriptionStatus{State: "active"}, Capabilities: dotbridge.Capabilities{Text: !tasks, Tasks: tasks}})
 			}))
 			defer srv.Close()
 			if err := dotbridge.SavePairing(dotbridge.Config{Address: strings.TrimPrefix(srv.URL, "http://"), Credential: "fixture"}, "token"); err != nil {
