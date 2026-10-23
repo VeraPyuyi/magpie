@@ -145,7 +145,10 @@ func dotTo(ctx context.Context, out io.Writer, args []string) error {
 		if err != nil {
 			return fmt.Errorf("dot: status unavailable")
 		}
-		return json.NewEncoder(out).Encode(st)
+		return json.NewEncoder(out).Encode(struct {
+			dotbridge.Status
+			SubscriptionTerm string `json:"subscription_term,omitempty"`
+		}{st, st.SubscriptionTerm()})
 	case "submit":
 		b, err := dotRead(args[2], false, 256*1024)
 		if err != nil {

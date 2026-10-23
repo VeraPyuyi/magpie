@@ -211,9 +211,10 @@ func dotRoutesWithConnection(mux *http.ServeMux, paired func() (*dotbridge.Conne
 			}
 			writeJSON(w, struct {
 				dotbridge.Status
-				TaskAvailable bool `json:"task_available"`
-				TextAvailable bool `json:"text_available"`
-			}{st, dotTaskAvailable(st), st.Authorized(time.Now()) && st.Capabilities.Text})
+				TaskAvailable    bool   `json:"task_available"`
+				TextAvailable    bool   `json:"text_available"`
+				SubscriptionTerm string `json:"subscription_term,omitempty"`
+			}{st, dotTaskAvailable(st), st.Authorized(time.Now()) && st.Capabilities.Text, st.SubscriptionTerm()})
 			return
 		}
 		if path == "jobs" && r.Method == "POST" {

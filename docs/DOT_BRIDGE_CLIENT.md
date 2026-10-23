@@ -3,8 +3,10 @@
 Magpie talks to DotControl through a dedicated loopback HTTP client in `internal/dotbridge`. This package is intentionally separate from provider routing, gateway handlers, and UI work.
 
 Readiness uses `Status.Authorized`: the authenticated version 1 server's
-future proof expiry and active subscription expiry, with a nonfuture verified
-timestamp. Magpie imposes no additional ten-minute proof age and never extends
+enabled, paired, ready state and active subscription, with a nonzero, nonfuture
+verified timestamp. Proof and subscription expiry are nullable: omitted, JSON
+null and legacy zero dates mean no time bound; each present nonzero date must
+still be in the future. Missing readiness or verification never authorizes. Magpie imposes no additional ten-minute proof age and never extends
 either expiry. Optional `refresh_before`, `last_refreshed_at`, `renewal_state`
 and `subscribe_failure` diagnostics retain version 1 compatibility. The GUI
 shows renewal failure as a warning while the original grant remains authorized;
@@ -66,7 +68,7 @@ Local validation follows the queue: at most 32 messages, valid UTF-8, supported 
 
 ## Readiness
 
-Authenticated status includes subscription state/expiry and text/task capabilities. Only a bound paired connection can publish in-memory readiness after credential revalidation and a version-1 response. Publication and consumption require the current pairing identity and readiness revision, so an obsolete connection cannot make a replacement pairing ready; errors invalidate its cache. `CachedReady(now, capability)` requires enabled, paired, ready, the requested text or tasks capability, active subscription, nonfuture verification, cache age at most ten seconds, and unexpired proof and subscription. Each routed model requires its own capability. A later refresh invalidates an earlier in-flight refresh. There is no readiness setter or persisted synthetic proof. Missing subscription expiry fails closed.
+Authenticated status includes subscription state/expiry and text/task capabilities. Only a bound paired connection can publish in-memory readiness after credential revalidation and a version-1 response. Publication and consumption require the current pairing identity and readiness revision, so an obsolete connection cannot make a replacement pairing ready; errors invalidate its cache. `CachedReady(now, capability)` requires enabled, paired, ready, the requested text or tasks capability, active subscription, nonfuture verification, cache age at most ten seconds, and unexpired proof and subscription. Each routed model requires its own capability. A later refresh invalidates an earlier in-flight refresh. There is no readiness setter or persisted synthetic proof. Absent expiry permits permanent subscriptions only with active state and verified readiness. The CLI status JSON and GUI status API add `subscription_term: "permanent"` for active subscriptions with neither finite bound; this display metadata never grants readiness. Magpie does not send `events/subscribe` or `ttlMs`: ChatGPT must explicitly request `ttlMs: null` from DotControl to obtain a permanent grant. Omitting it retains DC's finite default.
 
 ## Routed task contract
 

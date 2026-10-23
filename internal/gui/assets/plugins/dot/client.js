@@ -5,7 +5,7 @@ magpie.plugin("dot", (ctx) => {
   let gatewaySource = false;
   const requestPath = () => gatewaySource ? "gateway/requests" : "requests";
   const cancelling = new Set();
-  let capacity = null;
+  let capacity = null, term = "";
   function drawCapacity() {
     const box = q("capacity"), c = capacity;
     box.textContent = c ? t("Dot capacity: {retained} retained of {limit}; {remaining} remaining. Probes also count.", c) : "";
@@ -85,8 +85,10 @@ magpie.plugin("dot", (ctx) => {
     // before connection/history reads. Selection revisions reject late replies.
     const recovery = selected ? recover(selected) : Promise.resolve();
     available = false;
+    term = "";
     try {
       const st = await api("status"); available = st.task_available === true;
+      if (st.subscription_term === "permanent") term = t("Permanent subscription");
       const stateLabels = {offline:"DotControl is offline", unpaired:"Dot is not paired; pair in the terminal", bridge_paused:"Dot bridge is paused", access_revoked:"Dot access was revoked; pair again"};
       const c = st.capacity;
       capacity = c && [c.limit,c.retained,c.remaining].every(Number.isSafeInteger) && c.limit > 0 && c.retained >= 0 && c.remaining >= 0 && c.retained + c.remaining === c.limit ? c : null;
@@ -94,7 +96,7 @@ magpie.plugin("dot", (ctx) => {
       if (st.subscription?.renewal_state === "failed" || st.subscribe_failure) note("Dot subscription renewal failed; ChatGPT must refresh it before expiry");
       capability = st.capabilities?.tasks ? "Task capability verified" : "Task probe required in DotControl";
     } catch { status = "unverified"; capacity = null; }
-    q("status").textContent = say(status); q("capability").textContent = say(capability); drawCapacity();
+    q("status").textContent = say(status) + (term ? " · " + t("Permanent subscription") : ""); q("capability").textContent = say(capability); drawCapacity();
     await Promise.all([history(), recovery]);
   }
   function mount(main) {
@@ -121,7 +123,7 @@ magpie.plugin("dot", (ctx) => {
     for (const button of root.querySelectorAll("[data-dot-source-label]")) button.textContent = t(button.dataset.dotSourceLabel);
     q("lookup").disabled = !selected;
     q("identity").textContent = selected || "";
-    q("status").textContent = say(status); q("capability").textContent = say(capability); drawCapacity();
+    q("status").textContent = say(status) + (term ? " · " + t("Permanent subscription") : ""); q("capability").textContent = say(capability); drawCapacity();
     note(notice); if (shownJob) result(shownJob); drawHistory();
   }
   ctx.slots.add("page", {key:"dot", title:"Dot", mount, open:refresh, relang});

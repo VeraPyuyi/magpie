@@ -59,7 +59,7 @@ func TestDotCLITaskGateAndRecovery(t *testing.T) {
 		}
 		switch {
 		case r.URL.Path == "/dot-bridge/v1/status":
-			json.NewEncoder(w).Encode(dotbridge.Status{Version: 1, Enabled: true, Paired: true, Ready: true, VerifiedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour), Subscription: dotbridge.SubscriptionStatus{State: "active", ExpiresAt: time.Now().Add(time.Hour)}, Capabilities: dotbridge.Capabilities{Tasks: enabled.Load()}})
+			json.NewEncoder(w).Encode(dotbridge.Status{Version: 1, Enabled: true, Paired: true, Ready: true, VerifiedAt: time.Now(), ExpiresAt: new(time.Now().Add(time.Hour)), Subscription: dotbridge.SubscriptionStatus{State: "active", ExpiresAt: new(time.Now().Add(time.Hour))}, Capabilities: dotbridge.Capabilities{Tasks: enabled.Load()}})
 		case strings.HasSuffix(r.URL.Path, "/cancel"):
 			posts.Add(1)
 			j := job

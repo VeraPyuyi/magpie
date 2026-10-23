@@ -6,7 +6,11 @@ and offline containers. It reads the local-window `/api/dot/status` endpoint,
 not the gateway listener. Ready, probe required, offline, subscription expired,
 locally disabled and unpaired remain distinct. An authenticated active grant
 whose refresh failed stays usable until its actual expiry and shows a renewal
-warning. ChatGPT owns `events/subscribe` renewal; Magpie never renews a grant.
+warning. Active subscriptions without finite proof or subscription expiry show
+“Permanent subscription” in all five locales on Routing and the optional Dot
+page. Missing dates never replace the required ready flag and nonzero verified
+proof. The shared label belongs to core i18n because both pages use it.
+ChatGPT owns `events/subscribe` renewal; Magpie never renews a grant.
 
 The routing-group model picker also always offers `dot/text` and `dot/task` for configuration
 unless a stored endpoint owns the `dot` ID. `/api/groups.models` marks this

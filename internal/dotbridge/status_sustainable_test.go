@@ -7,17 +7,17 @@ import (
 
 func TestDotAuthoritativeLeaseAndDisplayReason(t *testing.T) {
 	now := time.Now()
-	st := Status{Version: 1, Enabled: true, Paired: true, Ready: true, Code: "ready", VerifiedAt: now.Add(-time.Hour), ExpiresAt: now.Add(time.Hour), Subscription: SubscriptionStatus{State: "active", ExpiresAt: now.Add(time.Hour)}}
+	st := Status{Version: 1, Enabled: true, Paired: true, Ready: true, Code: "ready", VerifiedAt: now.Add(-time.Hour), ExpiresAt: new(now.Add(time.Hour)), Subscription: SubscriptionStatus{State: "active", ExpiresAt: new(now.Add(time.Hour))}}
 	if !st.Authorized(now) {
 		t.Fatal("current authenticated lease must permit old verified proof")
 	}
 	st.Ready = false
 	st.Code = "probe_required"
-	st.Subscription.ExpiresAt = now.Add(-time.Second)
+	st.Subscription.ExpiresAt = new(now.Add(-time.Second))
 	if st.Authorized(now) || st.DisplayCode(now) != "subscription_expired" {
 		t.Fatalf("lost actual expiry: %+v", st)
 	}
-	st.Subscription.ExpiresAt = now.Add(time.Hour)
+	st.Subscription.ExpiresAt = new(now.Add(time.Hour))
 	if st.DisplayCode(now) != "probe_required" {
 		t.Fatal("unverified active subscription is not expired")
 	}
