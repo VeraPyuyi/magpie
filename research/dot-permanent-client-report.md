@@ -27,7 +27,7 @@ Supplemental TestBuiltinsTranslated initially failed because the Windows working
 
 The completed browser rerun passed 58/58 tests across eight files, Chromium and WebKit, five locales, in 832.33 seconds (permanent-all-dot-restart.log). Earlier cancelled or timed-out invocations are not counted.
 
-The restarted full Go run failed internal/agent after its default 10-minute timeout, with TestReverseProxyTriedFirst running. Earlier failures in that run: TestAsideOfflineDisconnectRestoresWithoutDaemon (native fixture must report missing CLI), TestCodexSignInInKeychain (sign-in not detected), TestCopilotFolderFromAnIDEPluginIsNotTheCLI, TestQoderSettingsFromAnIDEPluginIsNotTheCLI/qoder-cn and /qoder (PATH fixtures), TestInstallWithoutNodeParses (bash resolves to Windows WSL stub without a distribution). The runner did not produce a complete final package summary; this is a failed, incomplete full-suite run, not full green. Exact output is retained in permanent-full-restart.log. These failures are outside the edited Dot paths; the install/timeout failures are not claimed to match the historical baseline.
+The restarted full Go run failed internal/agent after its default 10-minute timeout, with TestReverseProxyTriedFirst running. Earlier failures in that run: TestAsideOfflineDisconnectRestoresWithoutDaemon (native fixture must report missing CLI), TestCodexSignInInKeychain (sign-in not detected), TestCopilotFolderFromAnIDEPluginIsNotTheCLI, TestQoderSettingsFromAnIDEPluginIsNotTheCLI/qoder-cn and /qoder (PATH fixtures), TestInstallWithoutNodeParses (bash resolves to Windows WSL stub without a distribution). The runner subsequently completed with exit 1. Nine packages failed: agent, gateway, gui, library, plugin, provider, sessions, sqlitedb and usage. Agent, gateway and library reached the default 10-minute package timeout, so those packages did not finish all their tests. This is not full green. Exact output is retained in permanent-full-restart.log. These failures are outside the edited Dot paths; the install/timeout failures are not claimed to match the historical baseline.
 
 ## Windows fixture diagnostics
 
@@ -36,3 +36,58 @@ Separate focused reproduction (permanent-platform-fixtures.log) failed TestCodex
 ## Subscription requester / rollout boundary
 
 Repository-wide search found no Magpie events/subscribe request sender or ttlMs request construction (only the documentation added here mentions ttlMs). ChatGPT owns subscription creation/renewal. This client does NOT send ttlMs:null and does not convert existing finite grants. ChatGPT must explicitly request null; omission retains DC's finite default. Actual ChatGPT request behavior remains unverified. No live configuration, credentials or jobs were used; HTTP/browser fixtures and test sandbox/keyring substitutes cover this change.
+
+## Completed full-suite failure inventory
+
+Timeout running tests: agent TestReverseProxyTriedFirst; gateway TestLargeRequestEndpoints//v1/messages; library TestReadDuringSyncWaitsForOnePart. These are package-wide timeout observations, not proof that the currently running test caused the full duration.
+
+```text
+--- FAIL: TestAsideOfflineDisconnectRestoresWithoutDaemon (0.35s)
+--- FAIL: TestCodexSignInInKeychain (0.11s)
+--- FAIL: TestCopilotFolderFromAnIDEPluginIsNotTheCLI (0.04s)
+--- FAIL: TestQoderSettingsFromAnIDEPluginIsNotTheCLI (0.08s)
+    --- FAIL: TestQoderSettingsFromAnIDEPluginIsNotTheCLI/qoder-cn (0.04s)
+    --- FAIL: TestQoderSettingsFromAnIDEPluginIsNotTheCLI/qoder (0.03s)
+--- FAIL: TestInstallWithoutNodeParses (0.52s)
+panic: test timed out after 10m0s
+FAIL	github.com/yetone/magpie/internal/agent	602.406s
+--- FAIL: TestClaudeAsRootEnv (0.00s)
+--- FAIL: TestSweepBridgeProjectsTakesOnlyTheBridgesFolders (0.01s)
+panic: test timed out after 10m0s
+FAIL	github.com/yetone/magpie/internal/gateway	602.390s
+--- FAIL: TestLodyImportHandoff (0.01s)
+--- FAIL: TestPluginPageServedShutIn (0.01s)
+--- FAIL: TestPluginPageReadsWhatItDeclared (0.01s)
+--- FAIL: TestPluginPageNoAPI (0.01s)
+--- FAIL: TestPluginPageWebGuard (0.01s)
+--- FAIL: TestPluginPageActions (0.01s)
+--- FAIL: TestPluginPageWindowPolicy (0.01s)
+--- FAIL: TestProxyCheckSaysAProxyPassedBy (0.39s)
+--- FAIL: TestUpdateThatWontStart (0.01s)
+FAIL	github.com/yetone/magpie/internal/gui	272.696s
+--- FAIL: TestRemoveFoundSkill (0.05s)
+--- FAIL: TestGoneAgentListedToTakeOut (0.87s)
+panic: test timed out after 10m0s
+FAIL	github.com/yetone/magpie/internal/library	602.570s
+--- FAIL: TestWindowPageStaysInside (0.04s)
+FAIL	github.com/yetone/magpie/internal/plugin	145.378s
+--- FAIL: TestCodexSignedInInKeychain (0.07s)
+    --- FAIL: TestCodexSignedInInKeychain/keyring (0.03s)
+    --- FAIL: TestCodexSignedInInKeychain/auto (0.03s)
+--- FAIL: TestCodexKeychainRefreshWritesItem (0.04s)
+--- FAIL: TestCodexKeychainSwitch (0.10s)
+--- FAIL: TestCodexKeychainAskedSeldom (0.03s)
+--- FAIL: TestCodexKeychainPromptWaitedFor (0.09s)
+--- FAIL: TestCodexKeychainRetry (0.12s)
+--- FAIL: TestCodexKeychainSignOut (0.03s)
+--- FAIL: TestSavedButSignedOut (0.07s)
+FAIL	github.com/yetone/magpie/internal/provider	242.366s
+--- FAIL: TestCursorEditorCopiedOncePerChange (5.14s)
+FAIL	github.com/yetone/magpie/internal/sessions	39.250s
+--- FAIL: TestSQLiteSurvivesMalformedEnv (0.00s)
+FAIL	github.com/yetone/magpie/internal/sqlitedb	1.089s
+--- FAIL: TestDesktopSessionAccountMetadata (0.11s)
+FAIL	github.com/yetone/magpie/internal/usage	40.889s
+```
+
+Additional failures include GUI AppData/symlink/proxy/update fixtures, library skill delivery, provider keychain fixtures, Cursor temporary-copy cleanup, malformed-environment Windows process creation, and desktop account metadata. The exact names above are the final log inventory. Historical logs overlap many of these failures; no fresh-main baseline or causal diagnosis is claimed for every failure.
