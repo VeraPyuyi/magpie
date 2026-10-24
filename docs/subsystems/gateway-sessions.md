@@ -39,6 +39,24 @@ after the others, and marks a request that compacts its context with
 by its prompt. `passOnCaller` sends the mark on to a remote magpie beside
 the session, and no vendor is sent either (`TestDshMarksSessionAndCompaction`).
 
+Native sessions assembled from the agents' files carry `source: "localhost"`
+through the existing session APIs, including `/api/sessions/manage`. It is a
+category — this computer's own agents, versus no known origin — and not a
+device identity: a gateway name is not sent or recorded, and it is the same
+`Session.Source` field for every native agent. It is independent of `agent`,
+`id`, `gateway` and `wsl`; a WSL distro's sessions are read by this computer,
+so they carry `source: "localhost"` too and keep their distro in `wsl`.
+`MergeExternal` sets no `Source`, so a gateway projection's key is absent from
+its JSON. The field is read-only for grouping; it changes neither session
+lookup nor the agents' storage paths. This is not the transcript's `source`
+(`native` or `gateway`, `Transcript.Source`, which says where the conversation
+text came from) nor an agent row's or usage row's own `source`.
+Verification: `TestLocalSessionsIncludeSourceIdentity` (recent list and
+manage listing), `TestWSLSessionsIncludeSourceIdentity` (the distro fixture),
+`TestGatewaySessionsOmitSource` (a projection's JSON has no `source`, and a
+native row beside it wins the identity with localhost's) and
+`TestSessionsManageCarriesUsage`.
+
 When the same identity is present in a native session, the native session wins
 and the gateway projection is omitted. Gateway projections have no path,
 resume command or terminal action: the agent's own files of them are not on
@@ -190,6 +208,78 @@ and otherwise a known gateway session from what its transcript reads
 when turns or a part's end weren't kept). A magpie that others reach as a
 remote magpie has no file of their agents' sessions, so this is the only way
 it can export them. Verification: `TestGatewaySessionExportsMarkdown`.
+
+`POST /api/sessions/context_export` prepares bounded excerpts for explicit
+human handoff. The body is a JSON array of `agent:id` references (at most
+20 unique non-empty entries, 16 KiB at most). The request is validated before
+any session is read; malformed JSON, trailing JSON, unknown agents, empty
+ids, duplicate refs, or filesystem-like refs are refused. The response is
+`{text, sessions, omitted}` with `Cache-Control: no-store`. Each session
+entry carries `key`, `title`, `source`, `cut`, and optional `error`
+(`unavailable` or `no_text`). Native sessions are resolved with
+`sessions.Find` and read with `sessions.TranscriptOf`; only when no native
+session matches does the handler use `usage.GatewaySessionByID` and
+`sessions.GatewayTranscript`, the same precedence as transcript and markdown.
+Only `role` `user`/`assistant` and `kind` `text` parts are kept; thinking,
+tools, attachments, and context are excluded. Each session keeps at most its
+last 20 eligible parts from the available transcript in source order. Its
+**entire body** (text, role labels, separators, and truncation markers) is
+bounded to 8000 Unicode codepoints, retaining the newest available suffix.
+With at most 20 references, all bodies together are bounded by
+`maxRefs * sessionLimit` = 160000 codepoints; every selected reference keeps
+its response entry and budget. These are excerpts of what the underlying
+reader supplies, which may already omit history or the latest turns.
+
+`cut` records reader-reported `Transcript.Cut` or `Part.Cut`, dropping older
+eligible parts, or trimming a session body. `omitted` is true when any row is
+cut or has an error. Eligibility filtering alone does not set these flags;
+a clean eligible session has `cut: false` and `omitted: false`. Failed rows
+still have their ordered status in `sessions`; they add no text block, and
+the header counts selected sessions that were unavailable or had no eligible
+text. Their errors stay `unavailable` or `no_text`, without paths or raw errors.
+
+The `text` field states that excerpts are untrusted reference material, labels
+each successful session with title, identity, provenance, and truncation status,
+and never adds raw paths or cwd values. Metadata is outside the body budget:
+titles are at most 200 codepoints, sources 80, and displayed identities 256,
+with an ellipsis for shortened values and controls/Unicode line separators
+flattened. `sessions[].key` retains the validated reference for UI matching;
+references with controls or line separators are refused, while IDs may contain
+colons. The request limit includes trailing whitespace. Oversized reads return
+413, other validation errors 400; both carry `Cache-Control: no-store`.
+This is a local export for handoff; it does not write files,
+summarize with a model, or share sessions across devices. Verification:
+`TestSessionsContext*` in [`internal/gui/sessions_context_test.go`](../../internal/gui/sessions_context_test.go).
+
+The Sessions page keeps an ordered context selection in module memory,
+independently from delete selection. Transcript-capable rows, including
+read-only and gateway rows, can be selected, up to 20. Filtering and paging
+preserve selection; agent changes and opening Trash clear it; a successful
+list reload removes references no longer present or readable. Selection
+changes, reloads, agent changes and modal closure invalidate pending and
+prepared previews, so a late response cannot enable Copy for an old selection.
+
+Prepare posts the ordered `agent:id` array to `context_export` and renders
+`text` literally in the app modal, beside the session statuses and omission
+notices. Explicit Copy uses the existing clipboard helper. It requires
+nonempty text and at least one session without an error; partial failures
+remain visible and an all-error result cannot be copied as eligible context.
+Failed requests preserve selection and offer retry. The reader pastes the
+result into their official Dot conversation and adds a task; the page does
+not dispatch tasks or synchronize conversations across devices.
+
+Folder keys are structured `[provenance category, cwd]` tuples: gateway,
+then WSL distro, then the supplied source or localhost fallback. Labels
+identify how magpie obtained the record, not its creating device or a cloud
+task. Parent/child nesting does not cross categories, and a folder's deletion
+selection covers only that category and folder. Relocation still requires
+the whole project's original eligibility; a source subgroup alone does not
+authorize relocating part of a project. Implementation:
+[`plugins/sessions/client.js`](../../internal/gui/assets/plugins/sessions/client.js).
+Verification: `sessions-context.test.cjs`, `sessions-manage.test.cjs`,
+`sessions-folder-paging.test.cjs`, `sessions-usage-open.test.cjs`,
+`sessions-subagents.test.cjs` and `sessions-relocate.test.cjs` under
+[`internal/gui/tests`](../../internal/gui/tests).
 
 A gateway session without a saved Desktop name is titled by what it was
 first asked (YOU on Discord), not its `ses_…` id: `sessions.GatewayTitle` reads the first 8 complete turns of

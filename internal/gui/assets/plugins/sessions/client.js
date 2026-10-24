@@ -33,10 +33,15 @@ magpie.plugin("sessions", (ctx) => {
   const needleOf = (q) => q.trim().split(/\s+/).filter(Boolean).join(" ").toLowerCase();
   let trashOn = false;
   const picked = new Set();   // ids picked to delete, of the agent shown
-  const opened = new Set();   // folders unfolded, by cwd
-  const folderBoxes = new Map(); // each folder's box as drawn, by cwd
+  const contextPicked = new Set(); // ordered agent:id refs, independent of delete
+  let contextDialog = null;
+  let contextGeneration = 0;
+  const CONTEXT_MAX = 20;
+  const opened = new Set();   // folders unfolded, by category/folder key
+  const folderBoxes = new Map(); // each folder's box as drawn, by group key
   let openedFor = "";         // the agent the folders were first unfolded for
   let detail = "";            // the session opened to its details
+  let revealFolder = "";      // resolve Usage's input against the loaded source
   const talkOpen = new Set(); // sessions whose conversation is shown, by agent/id
   const talks = new Map();    // what was said in them, as read, by agent/id
   // A session's subagents sit under it, folded (#2261): the conversations
@@ -71,29 +76,39 @@ magpie.plugin("sessions", (ctx) => {
   // the Library page after it (yetone).
   const FOLDERS = "\x00folders";
 
-  // A session seen only through magpie's gateway has no folder magpie knows
-  // (its agent's files are on another computer, in a container or under
-  // another config folder): such sessions are grouped by that, not under
-  // "No folder" with the agent's own (lc on Discord).
-  const GW = "\x00gateway";
-  const groupOf = (s) => s.cwd || (s.gateway ? GW : "");
-  const groupName = (k) => k === GW ? t("Seen through the gateway") : k ? baseName(k) : t("No folder");
+  // Provenance describes the reader, not a remote device. Structured keys
+  // keep identical folders from different sources separate.
+  const categoryOf = (s) => s.gateway ? "gateway" : s.wsl ? "wsl:" + s.wsl : s.source || "localhost";
+  const groupOf = (s) => JSON.stringify([categoryOf(s), s.cwd || ""]);
+  const groupName = (k) => {
+    const [category, cwd] = JSON.parse(k);
+    return cwd ? baseName(cwd) : category === "gateway" ? t("Seen through the gateway") : t("No folder");
+  };
+  const categoryName = (category) => category === "gateway" ? t("Seen through the gateway")
+    : category.startsWith("wsl:") ? t("WSL on this computer: {name}", { name: category.slice(4) })
+    : category === "localhost" ? t("Local files") : t("Source: {source}", { source: category });
 
   const TRASH = "M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5M7 7v4M9 7v4";
   const TERM = "M3 4.5 6 7.5 3 10.5M7.5 11.5h5.5";
   const UNDO = "M5.5 3.5 2.5 6.5l3 3M2.5 6.5H10a3.5 3.5 0 0 1 0 7H7";
 
   async function load(name) {
+    invalidateContext();
     const n = ++loading;
     if (!data) draw();
     try {
       const d = await api("sessions/manage?agent=" + encodeURIComponent(name ?? agent));
       if (n !== loading) return;
+      // A preview may have been requested against the old list while this
+      // read was pending. Retire it before pruning the selection below.
+      invalidateContext();
       // models may be null for a session that spent nothing
       data = { ...d, agents: d?.agents || [], sessions: (d?.sessions || []).map((s) => ({ ...s, models: s.models || [] })), trash: d?.trash || [], agent: d?.agent || "" };
       failed = "";
       talks.clear(); // read again when shown: a session may have gone on
-      if (agent !== d.agent) { agent = d.agent; picked.clear(); }
+      if (agent !== d.agent) { agent = d.agent; picked.clear(); contextPicked.clear(); }
+      const available = new Set(data.sessions.filter((s) => s.transcript).map((s) => s.agent + ":" + s.id));
+      for (const ref of contextPicked) if (!available.has(ref)) contextPicked.delete(ref);
       if (query) searchSoon(); // the same words, in this agent's sessions
     } catch (e) {
       if (n !== loading) return;
@@ -108,6 +123,8 @@ magpie.plugin("sessions", (ctx) => {
   // on that agent (or as it was). The reader's click is what moves the view.
   function reveal(s, e) {
     if (s.agent && s.agent !== agent) {
+      invalidateContext();
+      contextPicked.clear();
       agent = s.agent;
       try { localStorage.setItem("magpie.sessionsAgent", agent); } catch {}
       picked.clear();
@@ -118,6 +135,7 @@ magpie.plugin("sessions", (ctx) => {
       query = "";
       searchSoon();
       detail = s.id;
+      revealFolder = s.id;
       openedFor = agent;
       opened.clear();
       opened.add(groupOf(s));
@@ -233,11 +251,14 @@ magpie.plugin("sessions", (ctx) => {
 
   function chooseAgent(name) {
     if (name === data.agent && !trashOn) return;
+    invalidateContext();
+    contextPicked.clear();
     trashOn = false;
     agent = name;
     try { localStorage.setItem("magpie.sessionsAgent", name); } catch {}
     picked.clear();
     detail = "";
+    revealFolder = "";
     data = { ...data, agent: name, sessions: null };
     draw();
     load(name);
@@ -350,7 +371,7 @@ magpie.plugin("sessions", (ctx) => {
     tr.setAttribute("aria-pressed", String(trashOn));
     tr.append(svg(TRASH, 13, 1.4), el("span", "", t("Trash")));
     if (data?.trash.length) tr.append(el("em", "", String(data.trash.length)));
-    tr.onclick = () => { trashOn = !trashOn; draw(); };
+    tr.onclick = () => { trashOn = !trashOn; if (trashOn) { invalidateContext(); contextPicked.clear(); } draw(); };
     h.append(q, tr);
     return h;
   }
@@ -394,7 +415,7 @@ magpie.plugin("sessions", (ctx) => {
     }
     const prov = providerBar();
     if (prov) box.append(prov);
-    box.append(selectBar(), el("div", "sm-tree"));
+    box.append(contextBar(), selectBar(), el("div", "sm-tree"));
     queueMicrotask(redrawList);
     return box;
   }
@@ -509,6 +530,108 @@ magpie.plugin("sessions", (ctx) => {
     cancel.focus({ preventScroll: true });
   }
 
+  // Closing, reloading or changing a selection retires the exact preview,
+  // including a response that arrives after the modal starts closing.
+  function invalidateContext() {
+    contextGeneration++;
+    const dialog = contextDialog;
+    contextDialog = null;
+    if (!dialog) return;
+    dialog.observer.disconnect();
+    dialog.ctl?.abort();
+    dialog.text = "";
+    dialog.copy.disabled = true;
+    if (confirmAsk === dialog.ed) closeConfirmAsk();
+  }
+
+  function contextBar() {
+    const bar = el("div", "row-head sm-context-bar");
+    const n = el("span", "note sm-context-count", t("{n}/20 context sessions", { n: contextPicked.size }));
+    n.setAttribute("role", "status");
+    const note = el("span", "note sm-context-limit", t("Select at most 20 sessions for context."));
+    note.id = "sm-context-limit";
+    const clear = el("button", "text sm-context-clear", t("Clear context"));
+    clear.type = "button";
+    clear.disabled = !contextPicked.size;
+    clear.onclick = () => {
+      invalidateContext(); contextPicked.clear();
+      for (const c of page.querySelectorAll(".sm-context-check")) c.checked = false;
+      bar.replaceWith(contextBar());
+    };
+    const go = el("button", "text sm-context-prepare", t("Prepare context"));
+    go.type = "button";
+    go.disabled = !contextPicked.size;
+    go.onclick = () => { go.focus({ preventScroll: true }); prepareContext(); };
+    bar.append(n, clear, go, note);
+    return bar;
+  }
+
+  function prepareContext() {
+    invalidateContext();
+    const generation = contextGeneration;
+    const refs = [...contextPicked];
+    if (!refs.length) return;
+    const ed = el("div", "editor wide sm-context-dialog");
+    const head = el("div", "ehead");
+    head.append(el("b", "", t("Prepare context")));
+    const content = el("div", "sm-context-content");
+    const bar = el("div", "bar");
+    const close = el("button", "text sm-context-close", t("Close"));
+    const retry = el("button", "text sm-context-retry", t("Retry context preparation"));
+    const cp = el("button", "text primary sm-context-copy", t("Copy context"));
+    for (const b of [close, retry, cp]) b.type = "button";
+    cp.disabled = true;
+    retry.hidden = true;
+    close.onclick = (e) => { e.stopPropagation(); invalidateContext(); };
+    bar.append(el("span", "grow"), close, retry, cp);
+    ed.append(head, content, bar);
+    const modal = $("#modal");
+    const dialog = { ed, copy: cp, text: "", ctl: null, observer: null };
+    const valid = () => contextDialog === dialog && generation === contextGeneration
+      && !modal.hidden && !modal.classList.contains("out") && modal.contains(ed);
+    // Watch the modal's own hidden/class and its children, not its subtree:
+    // updating the preview's own content is not the dialog going away.
+    dialog.observer = new MutationObserver(() => { if (!valid()) invalidateContext(); });
+    contextDialog = dialog;
+    confirmAsk = ed;
+    openModal(ed);
+    modal.classList.add("lib");
+    dialog.observer.observe(modal, { attributes: true, attributeFilter: ["hidden", "class"] });
+    dialog.observer.observe(modal.firstElementChild, { childList: true });
+    cp.onclick = () => { if (valid() && dialog.text && !cp.disabled) copy(dialog.text, t("Context")); };
+    const run = async () => {
+      if (!valid()) return;
+      cp.disabled = true;
+      retry.hidden = true;
+      dialog.text = "";
+      content.replaceChildren(el("p", "note sm-context-loading", t("Preparing excerpts…")));
+      const ctl = dialog.ctl = new AbortController();
+      try {
+        const out = await api("sessions/context_export", refs, undefined, ctl.signal);
+        if (!valid() || ctl.signal.aborted) return;
+        content.replaceChildren(el("p", "note", t("Review these literal excerpts, then copy and paste them into your official Dot conversation in ChatGPT, Slack or Teams. Add your task there.")));
+        for (const s of out.sessions || []) {
+          const result = el("p", "sm-context-result");
+          const label = s.error ? t(s.error === "no_text" ? "No eligible text" : "Conversation unavailable") : t("Excerpt ready");
+          result.append(el("span", "sm-context-dot"), el("span", "", (s.title || s.key) + " · " + (s.source || "") + " · " + label));
+          if (s.cut) result.append(el("span", "note", t("Some content was omitted or truncated.")));
+          content.append(result);
+        }
+        if (out.omitted) content.append(el("p", "note", t("Some content was omitted or truncated.")));
+        const eligible = (out.sessions || []).some((s) => !s.error) && typeof out.text === "string" && !!out.text.trim();
+        content.append(el("pre", "sm-context-preview", typeof out.text === "string" ? out.text : ""));
+        if (eligible) { dialog.text = out.text; cp.disabled = false; }
+        else content.append(el("p", "note sm-context-empty", t("No eligible text to copy. Select readable conversations and try again.")));
+      } catch (e) {
+        if (!valid() || ctl.signal.aborted) return;
+        content.replaceChildren(el("p", "note", t("Could not prepare context: {error}", { error: e.message })));
+        retry.hidden = false;
+      }
+    };
+    retry.onclick = run;
+    run();
+  }
+
   // the bar over the tree: pick every session shown, and delete those picked
   function selectBar() {
     const bar = el("div", "row-head sm-bar");
@@ -534,8 +657,8 @@ magpie.plugin("sessions", (ctx) => {
     return bar;
   }
 
-  // wholeFolder: the folder (a cwd, "" for none) when ids are every
-  // session of that one folder, so the dialog names it
+  // wholeFolder: the category/folder key when ids are every session of
+  // that one group, so the dialog names it
   function wholeFolder(ids) {
     const all = data?.sessions || [];
     const set = new Set(ids);
@@ -559,6 +682,12 @@ magpie.plugin("sessions", (ctx) => {
       if (list[0]) opened.add(groupOf(list[0]));
     }
     nest(list);
+    // Usage's row may not carry the new source field; the loaded session is
+    // authoritative about which category/folder contains the requested row.
+    if (revealFolder) {
+      const s = list.find((x) => x.id === (rootOf.get(revealFolder) || revealFolder));
+      if (s) { opened.add(groupOf(s)); revealFolder = ""; }
+    }
     // a session shown under another stays in sight: its folder and every
     // session it is under are unfolded
     for (const id of [detail, focus?.agent === data.agent ? focus.id : ""]) {
@@ -602,10 +731,12 @@ magpie.plugin("sessions", (ctx) => {
     for (const s of list) {
       let p = byId.get(s.parent_session), root = null;
       const seen = new Set([s.id]);
+      if (p && categoryOf(p) !== categoryOf(s)) p = null;
       while (p && !seen.has(p.id) && seen.size <= MAX_DEPTH) {
         seen.add(p.id);
         root = p;
         p = byId.get(p.parent_session);
+        if (p && categoryOf(p) !== categoryOf(s)) p = null;
       }
       // a loop, or a chain deeper than is drawn, leaves it on top
       if (!root || p) continue;
@@ -642,11 +773,13 @@ magpie.plugin("sessions", (ctx) => {
     const open = !!q || opened.has(cwd);
     const g = el("div", "list sm-group");
     const r = el("div", "row sm-folder");
-    // the sessions under those on top are the folder's too
+    // Keep child nesting, but folder counts and delete picks cover only
+    // sessions whose category and working folder match this header.
     const members = [];
     const under = (s, n) => { members.push(s); if (n < MAX_DEPTH) for (const k of kidsOf.get(s.id) || []) under(k, n + 1); };
     for (const s of items) under(s, 0);
-    const writable = members.filter((s) => s.deletable);
+    const inFolder = members.filter((s) => groupOf(s) === cwd);
+    const writable = inFolder.filter((s) => s.deletable);
     // the folder's box picks every session of it shown, folded or not,
     // for the bar's Delete; the bar still counts sessions (#527)
     if (current()?.deletable && writable.length) {
@@ -675,14 +808,18 @@ magpie.plugin("sessions", (ctx) => {
       if (opened.has(cwd)) opened.delete(cwd); else opened.add(cwd);
       redrawList();
     };
-    const path = cwd === GW ? "" : cwd;
-    r.append(fold, el("span", "sub sm-path", path), el("span", "grow"), el("span", "note", t(members.length === 1 ? "{n} session" : "{n} sessions", { n: members.length })));
-    const allInFolder = (data.sessions || []).filter((s) => s.cwd === cwd);
+    const [category, path] = JSON.parse(cwd);
+    r.append(fold);
+    if (category === "gateway") r.classList.add("sm-source-gateway");
+    const provenance = categoryName(category);
+    if (provenance !== groupName(cwd)) r.append(el("span", "sm-source", provenance));
+    r.append(el("span", "sub sm-path", path), el("span", "grow"), el("span", "note", t(inFolder.length === 1 ? "{n} session" : "{n} sessions", { n: inFolder.length })));
+    const allInFolder = (data.sessions || []).filter((s) => s.cwd === path);
     if (data.agent === "claude" && path && allInFolder.every((s) => !s.read_only && !s.gateway)
       && new Set(allInFolder.map((s) => s.wsl || "")).size === 1) {
       const move = el("button", "text", t("Relocate project"));
       move.type = "button";
-      move.onclick = (e) => { e.stopPropagation(); askRelocate(cwd, allInFolder[0].wsl || ""); };
+      move.onclick = (e) => { e.stopPropagation(); askRelocate(path, allInFolder[0].wsl || ""); };
       r.append(move);
     }
 
@@ -734,6 +871,26 @@ magpie.plugin("sessions", (ctx) => {
       c.setAttribute("aria-label", t("Select"));
       c.onclick = (e) => e.stopPropagation();
       c.onchange = () => { c.checked ? picked.add(s.id) : picked.delete(s.id); const bar = page.querySelector(".sm-bar"); if (bar) bar.replaceWith(selectBar()); folderBoxes.get(groupOf(s))?.sync(); };
+      r.append(c);
+    }
+    if (s.transcript) {
+      const c = el("input", "sm-context-check");
+      const ref = s.agent + ":" + s.id;
+      c.type = "checkbox";
+      c.checked = contextPicked.has(ref);
+      c.setAttribute("aria-label", t("Select context: {title}", { title: s.title || s.id }));
+      c.setAttribute("aria-describedby", "sm-context-limit");
+      c.onclick = (e) => e.stopPropagation();
+      c.onchange = () => {
+        if (c.checked && contextPicked.size >= CONTEXT_MAX) {
+          c.checked = false;
+          status(t("Select at most 20 sessions for context."), "err");
+          return;
+        }
+        invalidateContext();
+        c.checked ? contextPicked.add(ref) : contextPicked.delete(ref);
+        page.querySelector(".sm-context-bar")?.replaceWith(contextBar());
+      };
       r.append(c);
     }
     const who = el("div", "who");
@@ -1091,7 +1248,7 @@ magpie.plugin("sessions", (ctx) => {
           input.disabled = true;
           cancel.textContent = t("Close");
           picked.clear();
-          opened.add(out.to);
+          opened.add(groupOf({ cwd: out.to, wsl }));
           await load();
         } else {
           preview = out;
@@ -1119,7 +1276,7 @@ magpie.plugin("sessions", (ctx) => {
   }
 
   // askDelete asks in magpie's dialog before the sessions go to its trash;
-  // folder (a cwd, "" for none) when they are every session of one folder
+  // folder is the category/folder key when they are every session of it
   function askDelete(ids, folder) {
     const byID = new Map((data?.sessions || []).map((s) => [s.id, s]));
     const list = ids.map((id) => byID.get(id)).filter(Boolean);
@@ -1136,7 +1293,7 @@ magpie.plugin("sessions", (ctx) => {
       : folders ? t("Delete all {n} sessions in {k} folders?", { n: list.length, k: folders })
       : t("Delete {n} sessions?", { n: list.length })));
     ed.append(h);
-    if (folder && folder !== GW) ed.append(el("p", "sub sm-ask-path", folder));
+    if (folder && JSON.parse(folder)[1]) ed.append(el("p", "sub sm-ask-path", JSON.parse(folder)[1]));
     const names = el("ul", "sm-ask-list");
     for (const s of list.slice(0, 5)) names.append(el("li", "", s.title || s.id));
     if (list.length > 5) names.append(el("li", "more", t("+{n} more", { n: list.length - 5 })));

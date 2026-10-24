@@ -52,6 +52,7 @@ func TestSessionsManageCarriesUsage(t *testing.T) {
 	}
 	var out struct {
 		Sessions []struct {
+			Source string `json:"source"`
 			ID     string `json:"id"`
 			Input  int    `json:"input"`
 			Output int    `json:"output"`
@@ -67,6 +68,9 @@ func TestSessionsManageCarriesUsage(t *testing.T) {
 	for _, s := range out.Sessions {
 		if s.ID != id {
 			continue
+		}
+		if s.Source != "localhost" {
+			t.Fatalf("source = %q, want localhost", s.Source)
 		}
 		if s.Input == 0 || s.Output == 0 || len(s.Models) == 0 || s.Models[0].Model == "" {
 			t.Fatalf("no usage on the session: %+v", s)

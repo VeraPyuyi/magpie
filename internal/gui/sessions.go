@@ -67,6 +67,7 @@ func gatewaySession(g usage.GatewaySession) sessions.Session {
 
 func sessionRoutes(mux *http.ServeMux, w Windows) {
 	warmSessions()
+	sessionContextRoutes(mux)
 	mux.HandleFunc("GET /api/sessions", func(rw http.ResponseWriter, r *http.Request) {
 		n, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 		// The page draws a session count taken from every session
